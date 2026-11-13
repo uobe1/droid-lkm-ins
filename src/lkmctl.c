@@ -23,6 +23,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -279,7 +280,29 @@ int main(int argc, char **argv)
 		usage();
 		return 2;
 	}
-	opt.module = argv[2];
+	/*
+	 * Resolve the path first, as ksud and apd both do.
+	 *
+	 * A relative path that is valid from the caller's cwd can become invalid the
+	 * moment the module's init runs (it may chdir), and the path is also what
+	 * gets reported on success.  Resolving it up front makes the reported path
+	 * mean the same thing regardless of where the load ends up running.
+	 */
+	{
+		/* Static storage: opt.module outlives this block and is printed on
+		 * success, so a block-local buffer would leave it dangling. */
+		static char resolved[PATH_MAX];
+
+		if (realpath(argv[2], resolved)) {
+			opt.module = resolved;
+		} else {
+			opt.module = argv[2];
+			if (!strcmp(argv[1], "insmod"))
+				fprintf(stderr,
+					"[WARN] cannot resolve %s: %s; using it as given\n",
+					argv[2], strerror(errno));
+		}
+	}
 
 	/* rmmod takes a module NAME, not a path, and does not read the image. */
 	if (!strcmp(argv[1], "rmmod")) {
@@ -485,7 +508,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	printf("loaded: %s\n", opt.module);
+	printf("Loaded kernel module: %s\n", opt.module);
 	free(data);
 	lkm_kallsyms_free(&ks);
 	return 0;
