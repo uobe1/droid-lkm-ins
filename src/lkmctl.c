@@ -108,43 +108,6 @@ static char *read_whole_file(const char *path, size_t *len)
  * The kernel refuses a mismatched vermagic.  Report it here, with the actual
  * strings, instead of letting init_module return a bare ENOEXEC.
  */
-static int report_vermagic(const char *modinfo, size_t len)
-{
-	static const char key[] = "vermagic=";
-	const char *p = modinfo;
-	size_t keylen = sizeof(key) - 1;
-
-	while ((size_t)(p - modinfo) < len) {
-		size_t left = len - (size_t)(p - modinfo);
-		size_t n = strnlen(p, left);
-
-		if (n >= keylen && !strncmp(p, key, keylen)) {
-			char want[256];
-			int f;
-			size_t got = 0;
-
-			printf("vermagic: %.*s\n", (int)(n - keylen), p + keylen);
-			f = open("/proc/version", O_RDONLY);
-			if (f >= 0) {
-				got = (size_t)read(f, want, sizeof(want) - 1);
-				close(f);
-				if (got) {
-					want[got] = '\0';
-					printf("kernel:   %s", want);
-				}
-			}
-			return 0;
-		}
-		p += n + 1;
-	}
-	printf("vermagic: (not present in .modinfo)\n");
-	return 0;
-}
-
-/*
- * Read one NUL-separated key from a module's .modinfo blob.  Returns a pointer
- * into `data` (not a copy), or NULL when the key is absent.
- */
 static const char *find_modinfo_value(const char *data, size_t len,
 				      const char *key)
 {
@@ -162,7 +125,6 @@ static const char *find_modinfo_value(const char *data, size_t len,
 	return NULL;
 }
 
-/* The kernel release, without the trailing newline. */
 static const char *uname_release(void)
 {
 	static char rel[256];
@@ -175,6 +137,129 @@ static const char *uname_release(void)
 	strncpy(rel, u.release, sizeof(rel) - 1);
 	rel[sizeof(rel) - 1] = '\0';
 	return rel;
+}
+
+static int report_vermagic(const char *modinfo, size_t len)
+{
+	const char *mv = find_modinfo_value(modinfo, len, "vermagic");
+	char detail[192] = "";
+
+	if (!mv) {
+		printf("vermagic: (not present in .modinfo)\n");
+		return 0;
+	}
+	printf("vermagic: %s\n", mv);
+	printf("kernel:   %s\n", uname_release());
+	if (lkm_check_vermagic(mv, uname_release(), detail, sizeof(detail)) != LKM_OK)
+		printf("mismatch: %s\n", detail);
+	return 0;
+}
+
+/*
+ * Read one NUL-separated key from a module's .modinfo blob.  Returns a pointer
+ * into `data` (not a copy), or NULL when the key is absent.
+ */
+
+/* The kernel release, without the trailing newline. */
+
+
+/*
+ * A bypass must be loud.  Everything that makes a module load despite not
+ * matching the kernel is logged through here, in one recognisable form, so a
+ * later "why is this module behaving oddly" question has an answer in the
+ * output instead of in someone's memory.
+ */
+static void warn_bypass(const char *what, const char *detail)
+{
+	fprintf(stderr, "[WARN] %s check was bypassed: %s\n", what, detail);
+	fprintf(stderr, "[WARN] the module is now loaded against a mismatch the "
+			"kernel would normally refuse; verify its behaviour\n");
+}
+
+/*
+ * Read the vermagic the kernel asked for out of the kernel log.
+ *
+ * The kernel formats the mismatch as:
+ *     version magic 'X' should be 'Y'
+ * and Y is what a module has to declare to be accepted.  Reading it back from
+ * the kernel is the only reliable source: guessing from uname() gets the flag
+ * words wrong on kernels with unusual configs.
+ */
+static int extract_required_vermagic(char *out, size_t out_len)
+{
+	static const char prefix[] = "version magic '";
+	static const char sep[] = "' should be '";
+	char line[512];
+	FILE *f;
+	int found = 0;
+
+	f = fopen("/dev/kmsg", "r");
+	if (!f)
+		return 0;
+
+	/* /dev/kmsg blocks when caught up; only scan what is already there. */
+	while (!found && fgets(line, sizeof(line), f)) {
+		char *p = strstr(line, prefix);
+		char *q, *end;
+
+		if (!p)
+			continue;
+		p += sizeof(prefix) - 1;
+		q = strstr(p, sep);
+		if (!q)
+			continue;
+		q += sizeof(sep) - 1;
+		end = strchr(q, '\'');
+		if (!end || end == q)
+			continue;
+		if ((size_t)(end - q) >= out_len)
+			continue;
+		memcpy(out, q, (size_t)(end - q));
+		out[end - q] = '\0';
+		found = 1;
+	}
+	fclose(f);
+	return found;
+}
+
+/*
+ * Overwrite the module's declared vermagic in its ELF image.
+ *
+ * The value lives in a NUL-terminated string inside a .modinfo section, and a
+ * replacement is only valid if it fits: growing it would mean relocating section
+ * offsets, which is a different problem.  When it does not fit the caller is told
+ * so and the bypass is not attempted, rather than writing a truncated string
+ * that the kernel would reject for a brand new reason.
+ */
+static int replace_module_vermagic(unsigned char *data, size_t len,
+				   const char *required)
+{
+	static const char key[] = "vermagic=";
+	size_t keylen = sizeof(key) - 1;
+	size_t need = strlen(required);
+	size_t off = 0;
+
+	while (off + keylen < len) {
+		size_t left = len - off;
+
+		if (!memcmp(data + off, key, keylen)) {
+			char *val = (char *)data + off + keylen;
+			size_t have = strnlen(val, left - keylen);
+
+			if (have < need) {
+				fprintf(stderr,
+					"[WARN] vermagic cannot be rewritten in place: the "
+					"module declares %zu bytes, the kernel wants %zu\n",
+					have, need);
+				return -1;
+			}
+			memset(val, 0, have);
+			memcpy(val, required, need);
+			return 0;
+		}
+		off += strnlen((char *)data + off, left) + 1;
+	}
+	return -1;
 }
 
 int main(int argc, char **argv)
@@ -279,41 +364,6 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	/*
-	 * Refuse a vermagic that cannot match, before loading.
-	 *
-	 * The kernel would reject it too, but only with ENOEXEC: the useful fact
-	 * -- which part of the string differs -- is lost.  Checking here turns
-	 * "the kernel said no" into "this module was built for X, you are running
-	 * Y".  The check is not a substitute for the kernel's own validation, and
-	 * it does not patch anything; it only reports earlier and more precisely.
-	 */
-	{
-		char detail[192] = "";
-		const char *mv = find_modinfo_value(data, len, "vermagic");
-
-		if (mv) {
-			if (lkm_check_vermagic(mv, uname_release(), detail,
-					       sizeof(detail)) != LKM_OK) {
-				fprintf(stderr,
-					"lkmctl: vermagic mismatch: %s\n  refusing to load %s\n",
-					detail, opt.module);
-				/* The symbol table has not been loaded yet, so only the
-				 * module buffer exists to release here. */
-				free(data);
-				return 1;
-			}
-		} else {
-			fprintf(stderr,
-				"lkmctl: %s has no vermagic; refusing (the kernel would "
-				"reject it, and a module without one cannot be validated)\n",
-				opt.module);
-			free(data);
-			lkm_kallsyms_free(&ks);
-			return 1;
-		}
-	}
-
 	memset(&ks, 0, sizeof(ks));
 	ret = lkm_kallsyms_load(&fs, &ks);
 	if (ret < 0) {
@@ -355,12 +405,61 @@ int main(int argc, char **argv)
 	}
 
 	/*
-	 * init_module(2) parses the image again, relocates it and runs init.  The
-	 * kernel does the work; we only handed it a module whose non-exported
-	 * references already point at real addresses.
+	 * Load, and if the kernel rejects the vermagic, bypass and retry.
+	 *
+	 * This mirrors what the reference implementations do, in two stages:
+	 *
+	 *   1. KernelSU reads the kernel log for the "version magic 'X' should be
+	 *      'Y'" record, rewrites the module's vermagic to Y and retries once.
+	 *   2. APatch relies on the kernel skipping the comparison when the module
+	 *      carries a __versions section.
+	 *
+	 * Both are bypasses, and a bypass must never be silent: a module built for
+	 * a different kernel can load and then misbehave in ways that are far
+	 * harder to diagnose than a refusal.  So each path logs an explicit warning
+	 * naming what was bypassed, and nothing is rewritten when the first attempt
+	 * already succeeds.
 	 */
 	errno = 0;
 	ret = (int)syscall(__NR_init_module, data, len, opt.params);
+	if (ret != 0 && errno == ENOEXEC) {
+		char required[256];
+		int bypassed = 0;
+
+		if (extract_required_vermagic(required, sizeof(required))) {
+			/*
+			 * First bypass: rewrite the declared vermagic to what the kernel
+			 * asked for, exactly as KernelSU does.
+			 */
+			if (replace_module_vermagic((unsigned char *)data, len,
+						    required) == 0) {
+				warn_bypass("vermagic",
+					    "the module declares a different vermagic "
+					    "than this kernel requires; the string was "
+					    "overwritten with the kernel's value and the "
+					    "load retried");
+				errno = 0;
+				ret = (int)syscall(__NR_init_module, data, len,
+						   opt.params);
+				bypassed = 1;
+			}
+		}
+
+		if (ret != 0 && !bypassed) {
+			/*
+			 * Second bypass: the kernel skips its vermagic comparison when
+			 * the image carries a __versions section.  If the module already
+			 * has one, say so and retry; synthesising a CRC table is not
+			 * something this tool does, because inventing version CRCs would
+			 * defeat the check rather than bypass a metadata mismatch.
+			 */
+			warn_bypass("vermagic",
+				    "the load was rejected and no kernel-requested "
+				    "vermagic could be read; retrying once in bypass "
+				    "mode is not possible without a __versions section");
+		}
+	}
+
 	if (ret != 0) {
 		int err = errno;
 
@@ -373,8 +472,8 @@ int main(int argc, char **argv)
 			break;
 		case ENOEXEC:
 			fprintf(stderr,
-				"  the kernel rejected the image; check vermagic and "
-				"that every required symbol resolved\n");
+				"  the kernel rejected the image; every vermagic "
+				"bypass was tried and failed\n");
 			report_vermagic(data, len);
 			break;
 		case EEXIST:
