@@ -27,10 +27,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
+#include <sys/utsname.h>
 #include <unistd.h>
 
 #include "lkm_bind.h"
 #include "lkm_kallsyms.h"
+#include "lkm_loader.h"
 
 #if defined(__aarch64__)
 #ifndef __NR_init_module
@@ -139,6 +141,42 @@ static int report_vermagic(const char *modinfo, size_t len)
 	return 0;
 }
 
+/*
+ * Read one NUL-separated key from a module's .modinfo blob.  Returns a pointer
+ * into `data` (not a copy), or NULL when the key is absent.
+ */
+static const char *find_modinfo_value(const char *data, size_t len,
+				      const char *key)
+{
+	size_t keylen = strlen(key);
+	const char *p = data;
+
+	while ((size_t)(p - data) < len) {
+		size_t left = len - (size_t)(p - data);
+		size_t n = strnlen(p, left);
+
+		if (n >= keylen && !strncmp(p, key, keylen) && p[keylen] == '=')
+			return p + keylen + 1;
+		p += n + 1;
+	}
+	return NULL;
+}
+
+/* The kernel release, without the trailing newline. */
+static const char *uname_release(void)
+{
+	static char rel[256];
+	struct utsname u;
+
+	if (rel[0])
+		return rel;
+	if (uname(&u) != 0)
+		return "";
+	strncpy(rel, u.release, sizeof(rel) - 1);
+	rel[sizeof(rel) - 1] = '\0';
+	return rel;
+}
+
 int main(int argc, char **argv)
 {
 	struct opts opt = { 0 };
@@ -239,6 +277,41 @@ int main(int argc, char **argv)
 	if (!data) {
 		fprintf(stderr, "lkmctl: cannot read %s: %s\n", opt.module, strerror(errno));
 		return 1;
+	}
+
+	/*
+	 * Refuse a vermagic that cannot match, before loading.
+	 *
+	 * The kernel would reject it too, but only with ENOEXEC: the useful fact
+	 * -- which part of the string differs -- is lost.  Checking here turns
+	 * "the kernel said no" into "this module was built for X, you are running
+	 * Y".  The check is not a substitute for the kernel's own validation, and
+	 * it does not patch anything; it only reports earlier and more precisely.
+	 */
+	{
+		char detail[192] = "";
+		const char *mv = find_modinfo_value(data, len, "vermagic");
+
+		if (mv) {
+			if (lkm_check_vermagic(mv, uname_release(), detail,
+					       sizeof(detail)) != LKM_OK) {
+				fprintf(stderr,
+					"lkmctl: vermagic mismatch: %s\n  refusing to load %s\n",
+					detail, opt.module);
+				/* The symbol table has not been loaded yet, so only the
+				 * module buffer exists to release here. */
+				free(data);
+				return 1;
+			}
+		} else {
+			fprintf(stderr,
+				"lkmctl: %s has no vermagic; refusing (the kernel would "
+				"reject it, and a module without one cannot be validated)\n",
+				opt.module);
+			free(data);
+			lkm_kallsyms_free(&ks);
+			return 1;
+		}
 	}
 
 	memset(&ks, 0, sizeof(ks));

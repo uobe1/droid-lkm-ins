@@ -55,7 +55,8 @@ tools: $(OUT)/lkmctl
 
 $(OUT)/lkmctl: src/lkmctl.c $(IMPL_SRC) $(HEADERS) | $(OUT)
 	$(CC) $(CFLAGS) $(INC) -DLKM_BIND_IMPLEMENTATION \
-		-DLKM_KALLSYMS_IMPLEMENTATION -o $@ src/lkmctl.c
+		-DLKM_KALLSYMS_IMPLEMENTATION -DLKM_LOADER_IMPLEMENTATION \
+		-o $@ src/lkmctl.c
 
 # ---- tests ---------------------------------------------------------------
 test: $(OUT)/lkm_bind_test
