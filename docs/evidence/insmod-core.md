@@ -104,5 +104,8 @@ These are stated as unverified rather than silently treated as fact:
 | `local-2026-11-21T11:04Z` | 2026-11-21T11:04Z | clean clone of `origin/master` = `b6f7e0a` | `make test` | 29 + 163 + 12 checks, 0 failures, exit 0 |
 | `local-2026-11-21T13:24Z` | 2026-11-21T13:24Z | working tree at `b6f7e0a` | `make test` | 29 + 163 + 12 checks, 0 failures, exit 0 |
 
-CI: not dispatched.  There is no workflow in the repository yet; a foreground
-local run is the current gate, and adding CI is a separate change set.
+GitHub Actions usage: 0/9.  No workflow run was ever dispatched: there is no
+workflow in the repository (`ls .github/workflows` -> ENOENT), `gh run list -R
+uobe1/droid-lkm-ins` returns no runs, and every entry above is a foreground
+local run.  The "A1/A2/A3" batches in the session notes are local verification
+batches, not CI dispatches.  Adding a workflow is a separate change set.

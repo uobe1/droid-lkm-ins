@@ -48,8 +48,9 @@ Not verified yet (see [docs/evidence/insmod-core.md](docs/evidence/insmod-core.m
   `struct module` layout differs; that needs a QEMU or device gate;
 - the `[permanent]` episode and the 678-symbol bind have no captured log.
 
-There is no CI workflow in this repository; `make test` is the only gate, and
-it is run in the foreground so a failure is never silent.
+There is no CI workflow in this repository (GitHub Actions usage: 0/9);
+`make test` is the only gate, and it is run in the foreground so a failure is
+never silent.
 
 ## Why it is small
 
