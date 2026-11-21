@@ -2,23 +2,34 @@
  * lkmctl - bind a .ko's undefined symbols and let the kernel load it.
  *
  * This is the user-space half of the loader work: the same shape as APatch's
- * `apd insmod` and KernelSU's ksuinit.  It reads the module, binds undefined
- * symbols against /proc/kallsyms at their real addresses, then calls
- * init_module(2) so the kernel does the allocation, relocation and lifecycle
- * itself.
+ * `apd insmod` and KernelSU's `ksud insmod`/ksuinit.  It reads the module,
+ * binds undefined symbols against /proc/kallsyms at their real addresses, then
+ * calls init_module(2) so the kernel does the allocation, relocation and
+ * lifecycle itself.
  *
- * Deliberately absent: any attempt to force a foreign module in.  A module whose
- * vermagic does not match is reported, not patched around.
+ * When the kernel rejects the image with ENOEXEC because of a vermagic
+ * mismatch, the required vermagic is read back from the kernel log, the
+ * module's .modinfo section is rewritten, and the load is retried exactly
+ * once - the same shape as ksuinit.  The rewrite is announced loudly; a
+ * module built for another kernel can load and then misbehave in ways that are
+ * harder to diagnose than a refusal.  If the log does not name a required
+ * vermagic, the failure is reported as-is and no blind retry happens.
+ *
+ * Symbol resolution is deliberately only /proc/kallsyms: this loader works
+ * without the KernelSU driver.  Symbols that kptr_restrict hides are reported
+ * as failures, never papered over.
  *
  * Build:
- *   cc -O2 -Wall -Wextra -Werror -std=c11 -I tools/lkml \
+ *   cc -O2 -Wall -Wextra -Werror -std=c11 -Iinclude \
  *      -DLKM_BIND_IMPLEMENTATION -DLKM_KALLSYMS_IMPLEMENTATION \
- *      tools/lkmctl.c -o lkmctl
+ *      -DLKM_LOADER_IMPLEMENTATION \
+ *      src/lkmctl.c src/lkm_insmod.c -o lkmctl
  *
  * Usage:
  *   lkmctl insmod <module.ko> [param=value ...]
- *   lkmctl bind   <module.ko>            # rewrite a copy, do not load
- *   lkmctl check  <module.ko>            # report what would be bound
+ *   lkmctl rmmod  <name> [--force]
+ *   lkmctl bind   <module.ko>
+ *   lkmctl check  <module.ko>
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -32,6 +43,7 @@
 #include <unistd.h>
 
 #include "lkm_bind.h"
+#include "lkm_insmod.h"
 #include "lkm_kallsyms.h"
 #include "lkm_loader.h"
 
@@ -61,7 +73,7 @@ struct opts {
 static void usage(void)
 {
 	fprintf(stderr,
-		"usage: lkmctl insmod <module.ko> [param=value ...]\n"
+		"usage: lkmctl insmod [--force] <module.ko> [param=value ...]\n"
 		"       lkmctl rmmod  <name> [--force]\n"
 		"       lkmctl bind   <module.ko>\n"
 		"       lkmctl check  <module.ko>\n"
@@ -69,61 +81,11 @@ static void usage(void)
 		"insmod  bind undefined symbols, then call init_module(2)\n"
 		"rmmod   call delete_module(2); --force passes O_TRUNC to the kernel\n"
 		"bind    rewrite a copy in memory and report (no load)\n"
-		"check   only report which symbols resolve\n");
-}
-
-static char *read_whole_file(const char *path, size_t *len)
-{
-	FILE *f = fopen(path, "rb");
-	char *buf;
-	long size;
-
-	if (!f)
-		return NULL;
-	if (fseek(f, 0, SEEK_END) != 0) {
-		fclose(f);
-		return NULL;
-	}
-	size = ftell(f);
-	if (size < 0) {
-		fclose(f);
-		return NULL;
-	}
-	rewind(f);
-	buf = malloc((size_t)size);
-	if (!buf) {
-		fclose(f);
-		return NULL;
-	}
-	if (fread(buf, 1, (size_t)size, f) != (size_t)size) {
-		free(buf);
-		fclose(f);
-		return NULL;
-	}
-	fclose(f);
-	*len = (size_t)size;
-	return buf;
-}
-
-/*
- * The kernel refuses a mismatched vermagic.  Report it here, with the actual
- * strings, instead of letting init_module return a bare ENOEXEC.
- */
-static const char *find_modinfo_value(const char *data, size_t len,
-				      const char *key)
-{
-	size_t keylen = strlen(key);
-	const char *p = data;
-
-	while ((size_t)(p - data) < len) {
-		size_t left = len - (size_t)(p - data);
-		size_t n = strnlen(p, left);
-
-		if (n >= keylen && !strncmp(p, key, keylen) && p[keylen] == '=')
-			return p + keylen + 1;
-		p += n + 1;
-	}
-	return NULL;
+		"check   only report which symbols resolve\n"
+		"\n"
+		"--force  insmod only: allow a module whose struct module layout cannot\n"
+		"         be adapted to this kernel.  Requires a TTY and typing the\n"
+		"         confirmation sentence twice; the module may be unloadable.\n");
 }
 
 static const char *uname_release(void)
@@ -140,127 +102,132 @@ static const char *uname_release(void)
 	return rel;
 }
 
-static int report_vermagic(const char *modinfo, size_t len)
+/*
+ * Report the image's declared vermagic against the running kernel.  Used only
+ * on the failure path, to make an ENOEXEC actionable instead of a bare errno.
+ */
+static void report_vermagic(const struct lkm_buffer *img)
 {
-	const char *mv = find_modinfo_value(modinfo, len, "vermagic");
+	char mv[LKM_INSMOD_VERMAGIC_MAX];
 	char detail[192] = "";
+	int rc = lkm_modinfo_get(img->data, img->len, "vermagic", mv, sizeof(mv));
 
-	if (!mv) {
+	if (rc != 0) {
 		printf("vermagic: (not present in .modinfo)\n");
-		return 0;
+		return;
 	}
 	printf("vermagic: %s\n", mv);
 	printf("kernel:   %s\n", uname_release());
-	if (lkm_check_vermagic(mv, uname_release(), detail, sizeof(detail)) != LKM_OK)
+	if (lkm_check_vermagic(mv, uname_release(), detail, sizeof(detail)) !=
+	    LKM_OK)
 		printf("mismatch: %s\n", detail);
+}
+
+/* ---- kernel log access -------------------------------------------------- */
+
+/*
+ * The kernel log is opened before the first load attempt and drained to the
+ * current end.  Reads afterwards therefore return only the records the failed
+ * load produced, never an older mismatch from some other module.
+ *
+ * ksuinit opens the same devices with O_NONBLOCK and seeks to the end; the
+ * drain gives the same guarantee without depending on lseek() on /dev/kmsg.
+ */
+struct kmsg_ctx {
+	int fd;
+	int open_errno;
+};
+
+static int kmsg_open(struct kmsg_ctx *kmsg)
+{
+	static const char *paths[] = { "/dev/kmsg", "/kmsg" };
+	char record[16384];
+	size_t i;
+
+	kmsg->fd = -1;
+	kmsg->open_errno = 0;
+
+	for (i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+		int fd = open(paths[i], O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+
+		if (fd < 0) {
+			kmsg->open_errno = errno;
+			continue;
+		}
+		kmsg->fd = fd;
+		break;
+	}
+	if (kmsg->fd < 0)
+		return kmsg->open_errno;
+
+	/* Discard everything that is already in the ring buffer. */
+	for (;;) {
+		ssize_t n = read(kmsg->fd, record, sizeof(record));
+
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
+				break;
+			kmsg->open_errno = errno;
+			close(kmsg->fd);
+			kmsg->fd = -1;
+			return kmsg->open_errno;
+		}
+		if (n == 0)
+			break;
+	}
 	return 0;
 }
 
-/*
- * Read one NUL-separated key from a module's .modinfo blob.  Returns a pointer
- * into `data` (not a copy), or NULL when the key is absent.
- */
-
-/* The kernel release, without the trailing newline. */
-
-
-/*
- * A bypass must be loud.  Everything that makes a module load despite not
- * matching the kernel is logged through here, in one recognisable form, so a
- * later "why is this module behaving oddly" question has an answer in the
- * output instead of in someone's memory.
- */
-static void warn_bypass(const char *what, const char *detail)
+static void kmsg_close(struct kmsg_ctx *kmsg)
 {
-	fprintf(stderr, "[WARN] %s check was bypassed: %s\n", what, detail);
-	fprintf(stderr, "[WARN] the module is now loaded against a mismatch the "
-			"kernel would normally refuse; verify its behaviour\n");
+	if (kmsg->fd >= 0)
+		close(kmsg->fd);
+	kmsg->fd = -1;
 }
 
-/*
- * Read the vermagic the kernel asked for out of the kernel log.
- *
- * The kernel formats the mismatch as:
- *     version magic 'X' should be 'Y'
- * and Y is what a module has to declare to be accepted.  Reading it back from
- * the kernel is the only reliable source: guessing from uname() gets the flag
- * words wrong on kernels with unusual configs.
- */
-static int extract_required_vermagic(char *out, size_t out_len)
+static int kmsg_read_new(void *ctx, char *out, size_t out_len)
 {
-	static const char prefix[] = "version magic '";
-	static const char sep[] = "' should be '";
-	char line[512];
-	FILE *f;
-	int found = 0;
+	struct kmsg_ctx *kmsg = ctx;
+	size_t used = 0;
 
-	f = fopen("/dev/kmsg", "r");
-	if (!f)
-		return 0;
+	if (kmsg->fd < 0)
+		return -kmsg->open_errno;
 
-	/* /dev/kmsg blocks when caught up; only scan what is already there. */
-	while (!found && fgets(line, sizeof(line), f)) {
-		char *p = strstr(line, prefix);
-		char *q, *end;
+	for (;;) {
+		ssize_t n;
 
-		if (!p)
-			continue;
-		p += sizeof(prefix) - 1;
-		q = strstr(p, sep);
-		if (!q)
-			continue;
-		q += sizeof(sep) - 1;
-		end = strchr(q, '\'');
-		if (!end || end == q)
-			continue;
-		if ((size_t)(end - q) >= out_len)
-			continue;
-		memcpy(out, q, (size_t)(end - q));
-		out[end - q] = '\0';
-		found = 1;
-	}
-	fclose(f);
-	return found;
-}
-
-/*
- * Overwrite the module's declared vermagic in its ELF image.
- *
- * The value lives in a NUL-terminated string inside a .modinfo section, and a
- * replacement is only valid if it fits: growing it would mean relocating section
- * offsets, which is a different problem.  When it does not fit the caller is told
- * so and the bypass is not attempted, rather than writing a truncated string
- * that the kernel would reject for a brand new reason.
- */
-static int replace_module_vermagic(unsigned char *data, size_t len,
-				   const char *required)
-{
-	static const char key[] = "vermagic=";
-	size_t keylen = sizeof(key) - 1;
-	size_t need = strlen(required);
-	size_t off = 0;
-
-	while (off + keylen < len) {
-		size_t left = len - off;
-
-		if (!memcmp(data + off, key, keylen)) {
-			char *val = (char *)data + off + keylen;
-			size_t have = strnlen(val, left - keylen);
-
-			if (have < need) {
-				fprintf(stderr,
-					"[WARN] vermagic cannot be rewritten in place: the "
-					"module declares %zu bytes, the kernel wants %zu\n",
-					have, need);
-				return -1;
-			}
-			memset(val, 0, have);
-			memcpy(val, required, need);
-			return 0;
+		if (out_len - used < 2)
+			break;
+		n = read(kmsg->fd, out + used, out_len - used - 2);
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
+				break;
+			return -errno;
 		}
-		off += strnlen((char *)data + off, left) + 1;
+		if (n == 0)
+			break;
+		/* One record per read; separate records the way ksuinit does. */
+		out[used + (size_t)n] = '\n';
+		used += (size_t)n + 1;
 	}
-	return -1;
+	if (used < out_len)
+		out[used] = '\0';
+	return (int)used;
+}
+
+/* ---- load callback: the kernel syscall ---------------------------------- */
+
+static int cli_load(void *ctx, const void *data, size_t len, const char *params)
+{
+	(void)ctx;
+	errno = 0;
+	if (syscall(__NR_init_module, data, len, params) == 0)
+		return 0;
+	return errno ? errno : EIO;
 }
 
 int main(int argc, char **argv)
@@ -271,40 +238,26 @@ int main(int argc, char **argv)
 	struct lkm_symtab st;
 	struct lkm_bind_stats stats;
 	struct lkm_fs fs = { NULL, lkm_fs_read_file, lkm_fs_write_file };
+	struct lkm_buffer img;
+	struct lkm_insmod_ops ops = { NULL, cli_load, kmsg_read_new };
+	struct lkm_insmod_result result;
+	struct kmsg_ctx kmsg;
 	char diag[256] = "";
-	char *data;
-	size_t len = 0;
+	char *joined = NULL; /* owned; opt.params points at it when present */
+	char *fargs[256];
+	char **args = argv;
+	int nargs = argc;
+	int force = 0;
 	int i, ret;
 
 	if (argc < 3) {
 		usage();
 		return 2;
 	}
-	/*
-	 * Resolve the path first, as ksud and apd both do.
-	 *
-	 * A relative path that is valid from the caller's cwd can become invalid the
-	 * moment the module's init runs (it may chdir), and the path is also what
-	 * gets reported on success.  Resolving it up front makes the reported path
-	 * mean the same thing regardless of where the load ends up running.
-	 */
-	{
-		/* Static storage: opt.module outlives this block and is printed on
-		 * success, so a block-local buffer would leave it dangling. */
-		static char resolved[PATH_MAX];
 
-		if (realpath(argv[2], resolved)) {
-			opt.module = resolved;
-		} else {
-			opt.module = argv[2];
-			if (!strcmp(argv[1], "insmod"))
-				fprintf(stderr,
-					"[WARN] cannot resolve %s: %s; using it as given\n",
-					argv[2], strerror(errno));
-		}
-	}
-
-	/* rmmod takes a module NAME, not a path, and does not read the image. */
+	/* rmmod takes a module NAME, not a path, and does not read the image.
+	 * It is handled before any path canonicalization for exactly that
+	 * reason: "kernelsu" is a name, not a file. */
 	if (!strcmp(argv[1], "rmmod")) {
 		int flags = O_NONBLOCK;
 
@@ -359,31 +312,94 @@ int main(int argc, char **argv)
 		return 2;
 	}
 
+	/* --force is an insmod-only safety override; module parameters are
+	 * key=value, so it can be filtered anywhere without ambiguity. */
+	if (opt.do_load) {
+		int w = 0;
+
+		if (argc > (int)(sizeof(fargs) / sizeof(fargs[0]))) {
+			fprintf(stderr, "lkmctl: too many arguments\n");
+			return 2;
+		}
+		fargs[w++] = argv[0];
+		fargs[w++] = argv[1];
+		for (i = 2; i < argc; i++) {
+			if (!strcmp(argv[i], "--force")) {
+				force = 1;
+				continue;
+			}
+			fargs[w++] = argv[i];
+		}
+		args = fargs;
+		nargs = w;
+	} else {
+		for (i = 2; i < argc; i++) {
+			if (!strcmp(argv[i], "--force")) {
+				fprintf(stderr,
+					"lkmctl: --force is only valid for insmod\n");
+				return 2;
+			}
+		}
+	}
+	if (nargs < 3) {
+		usage();
+		return 2;
+	}
+
+	/*
+	 * Resolve the path first, as ksud and apd both do: a relative path that
+	 * is valid from the caller's cwd can stop being valid once the module's
+	 * init runs, and the path is also what gets reported on success.  A path
+	 * that cannot be resolved is an error, not something to guess around.
+	 */
+	{
+		/* Static storage: opt.module outlives this block and is printed on
+		 * success, so a block-local buffer would leave it dangling. */
+		static char resolved[PATH_MAX];
+		int r = lkm_canonicalize_path(args[2], resolved, sizeof(resolved));
+
+		if (r != 0) {
+			fprintf(stderr, "lkmctl: cannot resolve module path %s: %s\n",
+				args[2], strerror(r));
+			return 1;
+		}
+		opt.module = resolved;
+	}
+
 	/* Remaining arguments are module parameters, joined with spaces the way
 	 * init_module expects them. */
-	if (opt.do_load && argc > 3) {
-		size_t total = 0;
-		char *joined;
-		int off = 0;
+	if (opt.do_load && nargs > 3) {
+		size_t total = 1;
+		char *w;
 
-		for (i = 3; i < argc; i++)
-			total += strlen(argv[i]) + 1;
-		joined = malloc(total + 1);
+		for (i = 3; i < nargs; i++)
+			total += strlen(args[i]) + 1;
+		joined = malloc(total);
 		if (!joined) {
 			perror("malloc");
 			return 1;
 		}
-		for (i = 3; i < argc; i++)
-			off += snprintf(joined + off, total + 1 - (size_t)off, "%s%s",
-					off ? " " : "", argv[i]);
+		w = joined;
+		for (i = 3; i < nargs; i++) {
+			size_t n = strlen(args[i]);
+
+			if (i > 3)
+				*w++ = ' ';
+			memcpy(w, args[i], n);
+			w += n;
+		}
+		*w = '\0';
 		opt.params = joined;
 	} else {
 		opt.params = "";
 	}
 
-	data = read_whole_file(opt.module, &len);
-	if (!data) {
-		fprintf(stderr, "lkmctl: cannot read %s: %s\n", opt.module, strerror(errno));
+	lkm_buffer_init(&img);
+	ret = lkm_buffer_read_file(&img, opt.module, diag, sizeof(diag));
+	if (ret != 0) {
+		fprintf(stderr, "lkmctl: %s\n", diag);
+		lkm_buffer_free(&img);
+		free(joined);
 		return 1;
 	}
 
@@ -393,7 +409,8 @@ int main(int argc, char **argv)
 		fprintf(stderr,
 			"lkmctl: cannot read usable symbols from /proc/kallsyms (%d).\n"
 			"  kptr_restrict may be hiding addresses; run as root.\n", ret);
-		free(data);
+		lkm_buffer_free(&img);
+		free(joined);
 		return 1;
 	}
 	printf("symbols: %u from /proc/kallsyms%s\n", ks.count,
@@ -406,14 +423,15 @@ int main(int argc, char **argv)
 	st.on_unresolved = NULL;
 
 	memset(&stats, 0, sizeof(stats));
-	ret = lkm_bind_symbols(data, len, &st, &stats, diag, sizeof(diag));
+	ret = lkm_bind_symbols(img.data, img.len, &st, &stats, diag, sizeof(diag));
 	printf("bind: undefined=%u bound=%u unresolved=%u%s%s\n",
 	       stats.undefined, stats.bound, stats.unresolved,
 	       diag[0] ? " -- " : "", diag);
 	if (ret != LKM_BIND_OK) {
 		fprintf(stderr, "lkmctl: binding failed: %s\n", diag);
-		free(data);
+		lkm_buffer_free(&img);
 		lkm_kallsyms_free(&ks);
+		free(joined);
 		return 1;
 	}
 	if (opt.verbose && stats.unresolved)
@@ -422,94 +440,173 @@ int main(int argc, char **argv)
 
 	if (!opt.do_load) {
 		printf("not loaded (bind/check only)\n");
-		free(data);
+		lkm_buffer_free(&img);
 		lkm_kallsyms_free(&ks);
+		free(joined);
 		return 0;
 	}
 
 	/*
-	 * Load, and if the kernel rejects the vermagic, bypass and retry.
-	 *
-	 * This mirrors what the reference implementations do, in two stages:
-	 *
-	 *   1. KernelSU reads the kernel log for the "version magic 'X' should be
-	 *      'Y'" record, rewrites the module's vermagic to Y and retries once.
-	 *   2. APatch relies on the kernel skipping the comparison when the module
-	 *      carries a __versions section.
-	 *
-	 * Both are bypasses, and a bypass must never be silent: a module built for
-	 * a different kernel can load and then misbehave in ways that are far
-	 * harder to diagnose than a refusal.  So each path logs an explicit warning
-	 * naming what was bypassed, and nothing is rewritten when the first attempt
-	 * already succeeds.
+	 * A module's .gnu.linkonce.this_module carries the kernel's struct
+	 * module layout from the headers it was built against.  When that build
+	 * is not the running kernel, the event that matters is not "vermagic
+	 * mismatch" but "the kernel reads init/exit from the wrong offsets":
+	 * observed as a module that loads and can never be unloaded because exit
+	 * is read as NULL.  Read the real layout from the running kernel's BTF
+	 * and adapt the section before init_module(2).
 	 */
-	errno = 0;
-	ret = (int)syscall(__NR_init_module, data, len, opt.params);
-	if (ret != 0 && errno == ENOEXEC) {
-		char required[256];
-		int bypassed = 0;
+	{
+		struct lkm_module_layout layout;
+		char layout_detail[LKM_INSMOD_DETAIL_MAX];
+		char namebuf[64];
+		const char *module_name = NULL;
+		size_t before = img.len;
 
-		if (extract_required_vermagic(required, sizeof(required))) {
-			/*
-			 * First bypass: rewrite the declared vermagic to what the kernel
-			 * asked for, exactly as KernelSU does.
-			 */
-			if (replace_module_vermagic((unsigned char *)data, len,
-						    required) == 0) {
-				warn_bypass("vermagic",
-					    "the module declares a different vermagic "
-					    "than this kernel requires; the string was "
-					    "overwritten with the kernel's value and the "
-					    "load retried");
-				errno = 0;
-				ret = (int)syscall(__NR_init_module, data, len,
-						   opt.params);
-				bypassed = 1;
-			}
+		if (lkm_modinfo_get(img.data, img.len, "name", namebuf,
+				    sizeof(namebuf)) == 0)
+			module_name = namebuf;
+
+		if (!module_name) {
+			fprintf(stderr,
+				"lkmctl: refusing to load a module with no name= in "
+				".modinfo: its struct module layout cannot be "
+				"adapted\n");
+			lkm_buffer_free(&img);
+			lkm_kallsyms_free(&ks);
+			free(joined);
+			return 1;
 		}
 
-		if (ret != 0 && !bypassed) {
-			/*
-			 * Second bypass: the kernel skips its vermagic comparison when
-			 * the image carries a __versions section.  If the module already
-			 * has one, say so and retry; synthesising a CRC table is not
-			 * something this tool does, because inventing version CRCs would
-			 * defeat the check rather than bypass a metadata mismatch.
-			 */
-			warn_bypass("vermagic",
-				    "the load was rejected and no kernel-requested "
-				    "vermagic could be read; retrying once in bypass "
-				    "mode is not possible without a __versions section");
+		{
+			int layout_ok = 0;
+			char layout_reason[LKM_INSMOD_DETAIL_MAX] = "";
+
+			if (lkm_btf_module_layout("/sys/kernel/btf/vmlinux", &layout,
+						  layout_detail,
+						  sizeof(layout_detail)) != 0) {
+				snprintf(layout_reason, sizeof(layout_reason),
+					 "no usable kernel BTF: %.180s", layout_detail);
+			} else if (lkm_adapt_module_layout(&img, &layout, module_name,
+							   layout_detail,
+							   sizeof(layout_detail)) != 0) {
+				snprintf(layout_reason, sizeof(layout_reason),
+					 "module ABI layout cannot be adapted: %.160s",
+					 layout_detail);
+			} else {
+				layout_ok = 1;
+				if (img.len != before)
+					fprintf(stderr,
+						"[WARN] module .this_module layout differed "
+						"from this kernel; adapted to the kernel BTF "
+						"layout (struct module %zu bytes)\n",
+						layout.size);
+			}
+
+			if (!layout_ok) {
+				if (!force) {
+					fprintf(stderr,
+						"lkmctl: refusing to load: %s\n"
+						"  the module's struct module layout is not "
+						"safe for this kernel; it may load but never "
+						"be unloadable.  Re-run with `--force` to "
+						"attempt it with an interactive confirmation.\n",
+						layout_reason);
+					lkm_buffer_free(&img);
+					lkm_kallsyms_free(&ks);
+					free(joined);
+					return 1;
+				}
+				if (!isatty(STDIN_FILENO) ||
+				    !isatty(STDERR_FILENO)) {
+					fprintf(stderr,
+						"lkmctl: refusing --force load without a TTY: "
+						"cannot obtain the interactive confirmation\n");
+					lkm_buffer_free(&img);
+					lkm_kallsyms_free(&ks);
+					free(joined);
+					return 1;
+				}
+				fprintf(stderr,
+					"[DANGER] forcing a module whose layout cannot be "
+					"adapted to this kernel: %s\n"
+					"[DANGER] the kernel may load it and never be able "
+					"to unload it.\n", layout_reason);
+				if (lkm_confirm_unsafe_load(stdin, stderr) != 0) {
+					fprintf(stderr,
+						"lkmctl: load aborted; module not loaded\n");
+					lkm_buffer_free(&img);
+					lkm_kallsyms_free(&ks);
+					free(joined);
+					return 1;
+				}
+			}
 		}
 	}
 
-	if (ret != 0) {
-		int err = errno;
+	/* Open and drain the kernel log before the first attempt, so the retry
+	 * path can only see records this load produced. */
+	memset(&kmsg, 0, sizeof(kmsg));
+	kmsg.fd = -1;
+	ops.ctx = &kmsg;
+	if (kmsg_open(&kmsg) != 0)
+		fprintf(stderr,
+			"[WARN] cannot read the kernel log (%s); a vermagic retry "
+			"will be impossible\n", strerror(kmsg.open_errno));
 
+	memset(&result, 0, sizeof(result));
+	ret = lkm_insmod_exec(&img, opt.params, &ops, &result);
+	kmsg_close(&kmsg);
+
+	if (ret != 0) {
 		fprintf(stderr, "lkmctl: init_module failed: %s (%d)\n",
-			strerror(err), err);
-		switch (err) {
+			strerror(ret), ret);
+		if (result.detail[0])
+			fprintf(stderr, "  %s\n", result.detail);
+		if (result.attempts == 2)
+			fprintf(stderr,
+				"  vermagic was rewritten to '%s' and the load was "
+				"retried once\n", result.required);
+		switch (ret) {
 		case EPERM:
 			fprintf(stderr, "  not permitted: run as root in a domain "
 					"allowed to load modules\n");
 			break;
 		case ENOEXEC:
-			fprintf(stderr,
-				"  the kernel rejected the image; every vermagic "
-				"bypass was tried and failed\n");
-			report_vermagic(data, len);
+			if (result.attempts == 1)
+				fprintf(stderr,
+					"  the image was rejected; no vermagic "
+					"rewrite/retry was attempted\n");
+			report_vermagic(&img);
 			break;
 		case EEXIST:
 			fprintf(stderr, "  a module with this name is already loaded\n");
 			break;
 		}
-		free(data);
+		lkm_buffer_free(&img);
 		lkm_kallsyms_free(&ks);
+		free(joined);
 		return 1;
 	}
 
+	if (result.rewritten) {
+		/*
+		 * A bypass must be loud.  This is the only place a rewrite is
+		 * reported as something that happened; nothing warns about a
+		 * bypass that was not performed.
+		 */
+		fprintf(stderr,
+			"[WARN] vermagic mismatch was bypassed: the module declared "
+			"a different vermagic than this kernel requires; .modinfo was "
+			"rewritten to '%s' and the load retried once\n",
+			result.required);
+		fprintf(stderr,
+			"[WARN] the module is now loaded against a mismatch the kernel "
+			"would normally refuse; verify its behaviour\n");
+	}
+
 	printf("Loaded kernel module: %s\n", opt.module);
-	free(data);
+	lkm_buffer_free(&img);
 	lkm_kallsyms_free(&ks);
+	free(joined);
 	return 0;
 }

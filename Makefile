@@ -19,7 +19,9 @@ INC := -Iinclude
 OUT ?= build
 
 IMPL_SRC := $(OUT)/lkm_impl.c
-HEADERS := include/lkm_bind.h include/lkm_kallsyms.h
+INSMOD_SRC := src/lkm_insmod.c
+HEADERS := include/lkm_bind.h include/lkm_kallsyms.h include/lkm_loader.h \
+	include/lkm_insmod.h
 
 .PHONY: all static shared tools test clean
 
@@ -53,18 +55,24 @@ $(OUT)/liblkmloader-aarch64.so: $(IMPL_SRC) $(HEADERS) | $(OUT)
 # ---- command line front end ----------------------------------------------
 tools: $(OUT)/lkmctl
 
-$(OUT)/lkmctl: src/lkmctl.c $(IMPL_SRC) $(HEADERS) | $(OUT)
+$(OUT)/lkmctl: src/lkmctl.c $(INSMOD_SRC) $(IMPL_SRC) $(HEADERS) | $(OUT)
 	$(CC) $(CFLAGS) $(INC) -DLKM_BIND_IMPLEMENTATION \
 		-DLKM_KALLSYMS_IMPLEMENTATION -DLKM_LOADER_IMPLEMENTATION \
-		-o $@ src/lkmctl.c
+		-o $@ src/lkmctl.c $(INSMOD_SRC)
 
 # ---- tests ---------------------------------------------------------------
-test: $(OUT)/lkm_bind_test
+test: $(OUT)/lkm_bind_test $(OUT)/lkm_insmod_test $(OUT)/lkmctl
 	./$(OUT)/lkm_bind_test
+	./$(OUT)/lkm_insmod_test
+	sh tests/host/lkmctl_cli_test.sh ./$(OUT)/lkmctl
 
 $(OUT)/lkm_bind_test: tests/host/lkm_bind_test.c $(HEADERS) | $(OUT)
 	$(CC) $(CFLAGS) $(INC) -DLKM_BIND_IMPLEMENTATION \
 		-DLKM_KALLSYMS_IMPLEMENTATION -o $@ tests/host/lkm_bind_test.c
+
+$(OUT)/lkm_insmod_test: tests/host/lkm_insmod_test.c $(INSMOD_SRC) \
+		include/lkm_insmod.h | $(OUT)
+	$(CC) $(CFLAGS) $(INC) -o $@ tests/host/lkm_insmod_test.c $(INSMOD_SRC)
 
 clean:
 	rm -rf $(OUT)

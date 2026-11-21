@@ -17,11 +17,15 @@ a module that references symbols the kernel does not export.
 
 ## What it is
 
-Two things in one small piece of C:
+Three things in one small piece of C:
 
 1. **`lkm_bind.h`** — bind a `.ko`'s undefined symbols and hand it to the
    kernel's own `init_module(2)`.
-2. **`lkmctl`** — the command-line front end for the above.
+2. **`lkm_insmod.c`** — the testable insmod core: canonicalize the module path,
+   adapt the `.gnu.linkonce.this_module` section to the running kernel's
+   `struct module` layout (read from BTF), extract a kernel-required vermagic
+   from the kernel log, rewrite `.modinfo`, and retry the load exactly once.
+3. **`lkmctl`** — the command-line front end for the above.
 
 It is deliberately *not* a full module loader.  See "Why it is small" below.
 
@@ -63,12 +67,86 @@ Each of these was learned from the references and is covered by the tests:
   it is left `SHN_UNDEF` for the kernel to resolve the ordinary (exported) way.
   An all-zero kallsyms table is an error, never a table of address 0.
 
+## Module ABI layout (struct module)
+
+A `.ko` carries the kernel's `struct module` layout in its
+`.gnu.linkonce.this_module` section, generated from the headers it was built
+against.  If those headers differ from the running kernel, the module can load
+but have `init`/`exit` read from the wrong offsets.  The failure mode is a
+module the kernel marks `[permanent]` because `exit` reads as NULL, which then
+refuses to unload (reported on a device; see the evidence notes).
+
+`lkmctl` does not require a per-kernel module build.  Before `init_module(2)` it
+reads the running kernel's real layout from `/sys/kernel/btf/vmlinux`, and if
+the section size, name offset or the `init_module`/`cleanup_module` relocation
+offsets disagree, it rewrites the section at the aligned end of the image with
+exactly the kernel's `sizeof(struct module)`, places the name at the kernel's
+`name` offset, and moves the relocations to the kernel's `init`/`exit` offsets.
+Other fields are left zero for the kernel to initialise.  The adaptation is
+announced on stderr; a module that already matches is left byte-for-byte alone.
+
+`SHT_NOBITS` sections (`.bss`) have no file contents; the section walk skips
+their offsets and sizes exactly as the kernel does, so a large `.bss` is not
+mistaken for a truncated image.  Only ELF64 relocatable objects are handled
+(all Android GKI modules); a 32-bit image is refused with an explicit
+`ENOEXEC` rather than guessed around.
+
+When BTF exists but the section cannot be adapted, the load is refused before
+`init_module(2)`: a module that may never be unloadable is not loaded by
+default.  When the kernel has no BTF the layout cannot be checked, so that is
+also refused by default.
+
+`lkmctl insmod --force` is the only override.  It requires an interactive TTY
+on both stdin and stderr; without one the load is refused outright, because a
+non-interactive stream cannot consent.  When a TTY is present, the operator
+must type the following line exactly twice (trailing newline aside):
+
+```
+YES I AGREE LOAD THIS UNSAFE MODULE
+```
+
+Only then is the module loaded, with the danger restated on stderr.  The
+confirmation is deliberately long and all-caps so it cannot be typed by
+accident or mistaken for the usual `y/n`.
+
+## Vermagic mismatch
+
+A module built for another kernel release is normally rejected with `ENOEXEC`
+and a bare "invalid module format" that says nothing actionable.  The loader
+follows KernelSU's `ksuinit` here:
+
+1. before the first attempt, open `/dev/kmsg` (or `/kmsg`) non-blocking and
+   drain it to the current end, so only records from this load can be seen;
+2. on `ENOEXEC`, look for the newest record
+   `... version magic '<module>' should be '<kernel>' ...`;
+3. rebuild the module's `.modinfo` section with the kernel's value - the
+   section is located through the ELF section table, a fresh copy is appended
+   at the aligned end of the image, and the section header's `sh_offset` /
+   `sh_size` are updated, so a longer value fits;
+4. retry `init_module(2)` **once**.  A second failure is reported as the
+   failure it is; there is never a third attempt.
+
+The rewrite is always announced on stderr: a module built for a different
+kernel can load and then misbehave in ways far harder to diagnose than a
+refusal.  When the log does not contain a usable record, when it cannot be
+read, or when the image has no `.modinfo` section, the original `ENOEXEC` is
+reported together with that reason - no blind retry and no fabricated success.
+
 ## Usage
 
 ```
-lkmctl insmod <module.ko> [param=value ...]
+lkmctl insmod [--force] <module.ko> [param=value ...]
+lkmctl rmmod  <name> [--force]
 lkmctl bind   <module.ko>          # rewrite a copy, do not load
 lkmctl check  <module.ko>          # report what would be bound
+```
+
+The module path is canonicalized before it is read, as `ksud` and `apd` do; a
+path that cannot be resolved is an error rather than something to guess around.
+The success line is the references' line, with the canonical path:
+
+```
+Loaded kernel module: /data/local/tmp/dnsk_core.ko
 ```
 
 Requires root (or a domain allowed to load modules), plus readable addresses from
@@ -95,11 +173,17 @@ rather than pretend.
 ```
 make            # static library + host tests
 make shared     # prebuilt shared libraries (host + aarch64)
-make test       # run the host test suite
+make tools      # the lkmctl binary for the host
+make test       # run the host test suites
 ```
 
 The header is the deliverable; the library targets exist so a consumer can link
-a prebuilt `.so` instead of compiling the implementation.
+a prebuilt `.so` instead of compiling the implementation.  `make test` runs
+`lkm_bind_test` (symbol binding), `lkm_insmod_test` (path canonicalization,
+kernel-log vermagic extraction, `.modinfo` rewrite, BTF `struct module` layout
+parsing and `.this_module` adaptation, and the one-shot retry driver, all
+against synthesized ELF64 module images and a fake load callback), and a small
+CLI negative test (`lkmctl_cli_test.sh`).
 
 ## ABI
 
@@ -110,9 +194,15 @@ struct layouts may differ.
 ## References
 
 - [KernelSU] — `userspace/ksuinit/src/lib.rs` (`load_module`,
-  `kernel_symbols_iter`), and `kernel/preinit/runner/runner.c` for the in-kernel
-  variant.
-- [APatch] — `apd/src/insmod.rs`, a direct port of the above.
+  `kernel_symbols_iter`, `extract_required_vermagic`,
+  `replace_module_vermagic`), `userspace/ksud/src/debug.rs` (`insmod`: path
+  canonicalization and the `Loaded kernel module:` line), and
+  `kernel/preinit/runner/runner.c` for the in-kernel variant.
+- [APatch] — `apd/src/insmod.rs`, a direct port of the above, and the source of
+  the canonicalize/`Loaded kernel module:` output shape.
+- Verification of the kernel and reference claims above, with pinned commits
+  and `path:line` citations:
+  [docs/evidence/insmod-core.md](docs/evidence/insmod-core.md).
 
 Both are GPL-3.0; this project is GPL-2.0-only and shares no code with them, only
 the approach.
