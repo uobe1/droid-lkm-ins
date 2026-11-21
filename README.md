@@ -29,6 +29,28 @@ Three things in one small piece of C:
 
 It is deliberately *not* a full module loader.  See "Why it is small" below.
 
+## Status
+
+Verified on the development host (commit `b6f7e0a`, 2026-11-21):
+
+- `make test` passes: 29 (`lkm_bind_test`) + 163 (`lkm_insmod_test`) + 12
+  (`lkmctl_cli_test.sh`) checks, 0 failures, with `-Werror`; the same command
+  passes from a clean clone of `origin/master`.
+- The host's `/sys/kernel/btf/vmlinux` parses to
+  `size=1600 name_off=24 init_off=392 exit_off=1528`, matching the layout the
+  tests use.
+- The `SHT_NOBITS` regression test fails against the pre-fix code and passes
+  against this commit.
+
+Not verified yet (see [docs/evidence/insmod-core.md](docs/evidence/insmod-core.md)):
+
+- an adapted `.ko` has not completed a real `init_module(2)` on a kernel whose
+  `struct module` layout differs; that needs a QEMU or device gate;
+- the `[permanent]` episode and the 678-symbol bind have no captured log.
+
+There is no CI workflow in this repository; `make test` is the only gate, and
+it is run in the foreground so a failure is never silent.
+
 ## Why it is small
 
 The obvious design — copy the `.ko` into kernel memory, apply relocations

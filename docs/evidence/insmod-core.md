@@ -95,3 +95,14 @@ These are stated as unverified rather than silently treated as fact:
   a kernel whose `struct module` layout differs.  The next gate is a QEMU or
   device run; until then the README's "does not require a per-kernel module
   build" is the design goal, not a measured result.
+
+## Run record
+
+| run id | when (UTC) | commit / tree | command | result |
+|---|---|---|---|---|
+| `local-2026-11-21T10:52Z` | 2026-11-21T10:52Z | host kernel `6.12.30-android16-5` | BTF probe linked against `src/lkm_insmod.c` | `size=1600 name_off=24 init_off=392 exit_off=1528` |
+| `local-2026-11-21T11:04Z` | 2026-11-21T11:04Z | clean clone of `origin/master` = `b6f7e0a` | `make test` | 29 + 163 + 12 checks, 0 failures, exit 0 |
+| `local-2026-11-21T13:24Z` | 2026-11-21T13:24Z | working tree at `b6f7e0a` | `make test` | 29 + 163 + 12 checks, 0 failures, exit 0 |
+
+CI: not dispatched.  There is no workflow in the repository yet; a foreground
+local run is the current gate, and adding CI is a separate change set.
