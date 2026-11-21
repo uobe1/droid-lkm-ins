@@ -109,3 +109,35 @@ workflow in the repository (`ls .github/workflows` -> ENOENT), `gh run list -R
 uobe1/droid-lkm-ins` returns no runs, and every entry above is a foreground
 local run.  The "A1/A2/A3" batches in the session notes are local verification
 batches, not CI dispatches.  Adding a workflow is a separate change set.
+
+## Android static target (B)
+
+The host has NDK headers at `/usr/local/share/ndk` but no bionic sysroot and no
+Android clang driver (only `include/`, `sources/` and an include-only
+`sysroot/`), and installing a toolchain is out of scope for this repository.
+The `android` target therefore uses the existing aarch64 glibc cross toolchain:
+
+```
+$ aarch64-linux-gnu-gcc --version | head -1
+aarch64-linux-gnu-gcc (Debian 16.2.0-4) 16.2.0
+$ make android
+$ file build/lkmctl-android
+build/lkmctl-android: ELF 64-bit LSB executable, ARM aarch64, version 1
+(GNU/Linux), statically linked, BuildID[sha1]=<id>, for GNU/Linux 3.7.0,
+not stripped
+$ readelf -l build/lkmctl-android | grep INTERP   # no output, exit 1
+$ readelf -d build/lkmctl-android
+There is no dynamic section in this file.
+$ ./build/lkmctl-android          # host is aarch64; prints usage, exit 2
+```
+
+This is **not** a bionic build: it is a static glibc ELF with no `PT_INTERP`,
+so it does not need `/system/bin/linker64` or `/lib/ld-linux-aarch64.so.1`.
+Executing it on the Android device is the droid-hook gate's claim; it is not
+verified here.
+
+## Run record (Android)
+
+| run id | when (UTC) | commit / tree | command | result |
+|---|---|---|---|---|
+| `local-2026-11-21T13:57Z` | 2026-11-21T13:57Z | working tree at `40034c7` + android target | `make android`; `file`; `readelf -h/-l/-d`; host run | aarch64 static ELF, no `INTERP`, no dynamic section, host run exit 2 (usage) |

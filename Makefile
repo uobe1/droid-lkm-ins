@@ -14,6 +14,7 @@
 CC ?= cc
 AR ?= ar
 CROSS_AARCH64 ?= aarch64-linux-gnu-gcc
+ANDROID_CC ?= $(CROSS_AARCH64)
 CFLAGS ?= -O2 -Wall -Wextra -Werror -std=c11
 INC := -Iinclude
 OUT ?= build
@@ -23,7 +24,7 @@ INSMOD_SRC := src/lkm_insmod.c
 HEADERS := include/lkm_bind.h include/lkm_kallsyms.h include/lkm_loader.h \
 	include/lkm_insmod.h
 
-.PHONY: all static shared tools test clean
+.PHONY: all static shared tools android test clean
 
 all: static tools test
 
@@ -58,6 +59,20 @@ tools: $(OUT)/lkmctl
 $(OUT)/lkmctl: src/lkmctl.c $(INSMOD_SRC) $(IMPL_SRC) $(HEADERS) | $(OUT)
 	$(CC) $(CFLAGS) $(INC) -DLKM_BIND_IMPLEMENTATION \
 		-DLKM_KALLSYMS_IMPLEMENTATION -DLKM_LOADER_IMPLEMENTATION \
+		-o $@ src/lkmctl.c $(INSMOD_SRC)
+
+# ---- Android target -------------------------------------------------------
+# There is no bionic sysroot on the development host (only NDK headers), so
+# this links statically against the aarch64 glibc cross toolchain.  The result
+# has no PT_INTERP: it needs neither /system/bin/linker64 nor
+# /lib/ld-linux-aarch64.so.1.  It is a static Linux/Android-kernel executable,
+# not a bionic-linked one; running it on a device is the device gate's job.
+android: $(OUT)/lkmctl-android
+
+$(OUT)/lkmctl-android: src/lkmctl.c $(INSMOD_SRC) $(IMPL_SRC) $(HEADERS) | $(OUT)
+	$(ANDROID_CC) $(CFLAGS) $(INC) -static \
+		-DLKM_BIND_IMPLEMENTATION -DLKM_KALLSYMS_IMPLEMENTATION \
+		-DLKM_LOADER_IMPLEMENTATION \
 		-o $@ src/lkmctl.c $(INSMOD_SRC)
 
 # ---- tests ---------------------------------------------------------------

@@ -41,12 +41,18 @@ Verified on the development host (commit `b6f7e0a`, 2026-11-21):
   tests use.
 - The `SHT_NOBITS` regression test fails against the pre-fix code and passes
   against this commit.
+- `make android` produces `build/lkmctl-android`: `file` says
+  `ELF 64-bit LSB executable, ARM aarch64, statically linked`, `readelf -l`
+  has no `INTERP`, `readelf -d` has no dynamic section, and it runs on the
+  (aarch64) host.
 
 Not verified yet (see [docs/evidence/insmod-core.md](docs/evidence/insmod-core.md)):
 
 - an adapted `.ko` has not completed a real `init_module(2)` on a kernel whose
   `struct module` layout differs; that needs a QEMU or device gate;
-- the `[permanent]` episode and the 678-symbol bind have no captured log.
+- the `[permanent]` episode and the 678-symbol bind have no captured log;
+- running `build/lkmctl-android` on an Android device (that is the droid-hook
+  gate; this repository only claims the ELF shape and a host run).
 
 There is no CI workflow in this repository (GitHub Actions usage: 0/9);
 `make test` is the only gate, and it is run in the foreground so a failure is
@@ -197,6 +203,7 @@ rather than pretend.
 make            # static library + host tests
 make shared     # prebuilt shared libraries (host + aarch64)
 make tools      # the lkmctl binary for the host
+make android    # aarch64 static lkmctl for the device (see below)
 make test       # run the host test suites
 ```
 
@@ -207,6 +214,41 @@ kernel-log vermagic extraction, `.modinfo` rewrite, BTF `struct module` layout
 parsing and `.this_module` adaptation, and the one-shot retry driver, all
 against synthesized ELF64 module images and a fake load callback), and a small
 CLI negative test (`lkmctl_cli_test.sh`).
+
+## Android target build
+
+`make android` builds `build/lkmctl-android`, an aarch64 ELF meant to be copied
+to the device:
+
+```
+make android
+```
+
+This host has the NDK headers (`/usr/local/share/ndk`) but no bionic sysroot or
+Android clang driver, and installing a toolchain is out of scope, so the target
+links **statically against the aarch64 glibc cross toolchain**
+(`aarch64-linux-gnu-gcc -static`).  It is therefore not a bionic-linked binary,
+but it has no `PT_INTERP`: it needs neither `/system/bin/linker64` nor
+`/lib/ld-linux-aarch64.so.1`.
+
+```
+$ file build/lkmctl-android
+build/lkmctl-android: ELF 64-bit LSB executable, ARM aarch64, version 1
+(GNU/Linux), statically linked, ..., for GNU/Linux 3.7.0, not stripped
+$ readelf -l build/lkmctl-android | grep INTERP   # no output
+$ readelf -d build/lkmctl-android
+There is no dynamic section in this file.
+```
+
+Limits:
+
+- static glibc, not bionic; a bionic target needs a real NDK and is not built
+  here;
+- on-device execution is the device gate's claim, not this repository's: the
+  binary has only been checked with `file`, `readelf` and one run on the host
+  (which is itself aarch64);
+- the host binary `build/lkmctl` stays glibc dynamic and must not be used on
+  Android.
 
 ## ABI
 
