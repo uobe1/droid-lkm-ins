@@ -1,0 +1,64 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# QEMU init for the same-KMI layout-adaptation gate.
+#
+# Runs lkmctl-android on a module whose .this_module layout was moved to a
+# second known set, and asserts load, visibility and clean removal.  Every
+# failure names the step it happened at, so a red run is diagnosable without
+# re-running it.
+set -u
+
+fail() {
+	echo "LKM_QEMU_FAIL $*"
+	sync
+	poweroff -f 2>/dev/null || reboot -f
+}
+
+mkdir -p /proc /sys /dev /tmp
+mount -t proc proc /proc || fail "mount proc"
+mount -t sysfs sysfs /sys || fail "mount sysfs"
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || \
+	mount -t tmpfs tmpfs /dev || fail "mount dev"
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts 2>/dev/null
+
+echo "LKM_QEMU_BOOT_OK $(uname -r)"
+
+echo "--- insmod"
+/lkmctl-android insmod /probe.ko > /tmp/insmod.log 2>&1
+rc=$?
+cat /tmp/insmod.log
+if [ "$rc" -eq 0 ] && grep -q 'Loaded kernel module:' /tmp/insmod.log; then
+	echo "LKM_QEMU_LOAD_OK"
+else
+	fail "load (lkmctl rc=$rc): see the log above"
+fi
+
+grep -q 'layout differed' /tmp/insmod.log || \
+	fail "adapt (no adaptation announced; the delta did not exercise it)"
+
+echo "--- /proc/modules"
+if grep -q '^samekmi_probe ' /proc/modules; then
+	echo "LKM_QEMU_MODULE_VISIBLE"
+else
+	fail "visible: samekmi_probe not in /proc/modules"
+fi
+
+echo "--- rmmod"
+/lkmctl-android rmmod samekmi_probe > /tmp/rmmod.log 2>&1
+rrc=$?
+cat /tmp/rmmod.log
+if [ "$rrc" -ne 0 ] || ! grep -q 'removed: samekmi_probe' /tmp/rmmod.log; then
+	fail "rmmod (lkmctl rc=$rrc): $(cat /tmp/rmmod.log)"
+fi
+
+if grep -q '^samekmi_probe ' /proc/modules; then
+	fail "residue: samekmi_probe still loaded after rmmod"
+fi
+echo "LKM_QEMU_RMMOD_OK"
+echo "LKM_QEMU_NO_RESIDUE"
+
+echo "LKM_QEMU_OK"
+sync
+poweroff -f 2>/dev/null || reboot -f

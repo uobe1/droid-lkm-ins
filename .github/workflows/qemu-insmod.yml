@@ -1,0 +1,152 @@
+name: qemu-insmod
+
+# Same-KMI layout-adaptation gate.
+#
+# Builds the android16-6.12 Image and a same-KMI probe module from the same
+# DDK tree (matching vermagic and matching CFI instrumentation), moves the
+# module's struct-module layout to a second known set, and boots QEMU to make
+# lkmctl-android adapt it back and load it for real:
+#
+#   Loaded kernel module:  ->  /proc/modules visible  ->  rmmod, no residue
+#
+# This proves the adaptation path end to end without touching a device.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: build same-KMI image and probe module
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: ghcr.io/ylarod/ddk-min:android16-6.12-20260828
+      options: --user root
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Image and the same-KMI probe module
+        shell: bash
+        run: |
+          set -euxo pipefail
+          KDIR=/opt/ddk/kdir/android16-6.12
+          test -d "$KDIR"
+          make -C "$KDIR" M="$GITHUB_WORKSPACE/ci/samekmi" modules
+          KO="$GITHUB_WORKSPACE/ci/samekmi/samekmi_probe.ko"
+          test -s "$KO"
+          mkdir -p out
+          OBJCOPY=$(command -v llvm-objcopy || command -v aarch64-linux-gnu-objcopy)
+          "$OBJCOPY" -O binary -R .note -R .note.gnu.build-id -R .comment \
+            -S "$KDIR/vmlinux" out/Image
+          test -s out/Image
+          cp "$KO" out/samekmi_probe.ko
+          cp "$KDIR/.config" out/kernel.config
+          echo "=== built module ==="
+          readelf -h "$KO" | sed -n '1,12p'
+          readelf -p .modinfo "$KO" | grep -E 'name=|vermagic='
+          readelf -S --wide "$KO" | grep -E 'this_module|__versions'
+          readelf -r --wide "$KO" | grep -E 'init_module|cleanup_module'
+          echo "=== kernel config of the gate kernel ==="
+          grep -E '^CONFIG_(CFI_CLANG|CFI_PERMISSIVE|DEBUG_INFO_BTF|MODULES|MODULE_UNLOAD|KALLSYMS)=' \
+            out/kernel.config || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: insmod-gate-image
+          path: out/
+          if-no-files-found: error
+
+  gate:
+    name: boot QEMU and load the adapted module
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: insmod-gate-image
+          path: out
+
+      - name: Install QEMU and the aarch64 cross toolchain
+        shell: bash
+        run: |
+          set -euxo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            qemu-system-arm gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
+            cpio gzip curl ca-certificates
+
+      - name: Build lkmctl-android and apply the synthetic layout delta
+        shell: bash
+        run: |
+          set -euxo pipefail
+          make android
+          test -s build/lkmctl-android
+          file build/lkmctl-android
+          readelf -l build/lkmctl-android | grep -c INTERP || true
+          readelf -d build/lkmctl-android | tail -1
+          # Move the layout to the second known set: 1584 / 376 / 1512.
+          python3 scripts/synthetic-layout-delta.py \
+            out/samekmi_probe.ko out/samekmi_probe.delta.ko
+          echo "=== patched module ==="
+          readelf -S --wide out/samekmi_probe.delta.ko | grep this_module
+          readelf -r --wide out/samekmi_probe.delta.ko | \
+            grep -E 'init_module|cleanup_module'
+
+      - name: Build the initramfs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BASE=https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64
+          curl -fsSL -o alpine.tar.gz \
+            "$BASE/alpine-minirootfs-3.20.3-aarch64.tar.gz"
+          mkdir -p rootfs
+          tar -xzf alpine.tar.gz -C rootfs
+          cp build/lkmctl-android rootfs/lkmctl-android
+          cp out/samekmi_probe.delta.ko rootfs/probe.ko
+          cp tests/qemu/init-insmod rootfs/init
+          chmod 0755 rootfs/init rootfs/lkmctl-android
+          (cd rootfs && find . | cpio -o -H newc 2>/dev/null | gzip -9) \
+            > initramfs.cpio.gz
+          ls -l initramfs.cpio.gz
+
+      - name: Boot and assert the gate
+        shell: bash
+        run: |
+          set -uo pipefail
+          set +e
+          timeout 900 qemu-system-aarch64 \
+            -M virt -cpu max -m 3072 -smp 4 -nographic -no-reboot \
+            -kernel out/Image -initrd initramfs.cpio.gz \
+            -append "console=ttyAMA0 rdinit=/init panic=-1 nokaslr selinux=0" \
+            > qemu.log 2>&1
+          qemu_rc=$?
+          set -e
+          echo "qemu_rc=$qemu_rc"
+          echo "=== serial tail ==="
+          tail -60 qemu.log
+          echo "=== kernel-side failures ==="
+          if grep -nE 'CFI failure|Oops|BUG:|Kernel panic|invalid module format|Unknown symbol' qemu.log; then
+            echo "FAIL: kernel-side failure in the serial log"
+            exit 1
+          fi
+          for m in LKM_QEMU_BOOT_OK LKM_QEMU_LOAD_OK LKM_QEMU_MODULE_VISIBLE \
+                   LKM_QEMU_RMMOD_OK LKM_QEMU_NO_RESIDUE LKM_QEMU_OK; do
+            if ! grep -q "$m" qemu.log; then
+              echo "FAIL: missing marker $m"
+              exit 1
+            fi
+          done
+          echo "gate passed"
+
+      - name: Upload the serial log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-insmod-log
+          path: qemu.log
+          if-no-files-found: warn
