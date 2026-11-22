@@ -141,3 +141,46 @@ verified here.
 | run id | when (UTC) | commit / tree | command | result |
 |---|---|---|---|---|
 | `local-2026-11-21T13:57Z` | 2026-11-21T13:57Z | working tree at `40034c7` + android target | `make android`; `file`; `readelf -h/-l/-d`; host run | aarch64 static ELF, no `INTERP`, no dynamic section, host run exit 2 (usage) |
+
+## Cancelled direction: cross-KMI (closed 2026-11-22)
+
+Cross-KMI loading was never a project requirement.  The one attempt at it is
+recorded here so it is not repeated:
+
+- Artifact: `kmi61_probe.ko`, built by workflow `build-kmi61-module` from the
+  `android14-6.1` DDK (clang 17.0.2), sha256
+  `d58d39c75d32c5dc8ad120146f6c40fdf7f4ed13405f5486b7ee048d216d063b`,
+  run `44976400067`, headSha `7e6e4585`.
+- Its real cross-KMI values: `.gnu.linkonce.this_module` = `0x440` (1088
+  bytes), `init`/`exit` relocations at 368/984, vermagic
+  `6.1.166-dirty SMP preempt mod_unload modversions aarch64`.
+- The device (`6.12.30-android16-5`, layout 1600/24/392/1528, vermagic
+  `...-android16-5`) reached `do_init_module`, i.e. the vermagic rewrite and
+  the section-layout adaptation were both accepted, then died in
+  `do_one_initcall`:
+
+```
+kmi61_probe: no symbol version for module_layout
+Failed to load code tags of type alloc_tags from the module kmi61_probe
+CFI failure at do_one_initcall+0xd4/0x34c (target: init_module+0x0/0xfe4 [kmi61_probe]; expected type: 0x6fbb3035)
+Internal error: Oops - CFI: 00000000f2008233 [#1] PREEMPT SMP
+```
+
+- Cause: the device runs `CONFIG_CFI_CLANG=y` with `CONFIG_CFI_PERMISSIVE`
+  unset (verified from `/proc/config.gz`), and the 6.1 build carries no
+  `__cfi_*` / `.kcfi_traps` (`nm`/`readelf`: 0 matches).  KCFI compares type
+  hashes at the indirect call and cannot be repaired from user space, so a
+  cross-KMI module is structurally unloadable-on-load on this device.
+- Consequence: the probe files, workflow and commit were removed from this
+  repository.  The device rebooted on its own after the panic
+  (`ro.boot.bootreason=kernel_panic`); `kmi61_probe` left no residue
+  (`/proc/modules` match count 0).
+- Scope now stated in the README: same KMI (`android16-6.12`) only.
+
+## Same-KMI gate (planned, not yet run)
+
+The verification that remains is same-KMI + a reproducible synthetic layout
+delta: take a real `android16-6.12` module whose `.this_module` already
+matches, move `sh_size` and the `init`/`exit` relocations to a second known
+set, and let `lkmctl` adapt them back — in QEMU first, on a device only after
+that gate is green.  No Action has been dispatched for it.

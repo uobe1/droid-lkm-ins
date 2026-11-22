@@ -48,15 +48,19 @@ Verified on the development host (commit `b6f7e0a`, 2026-11-21):
 
 Not verified yet (see [docs/evidence/insmod-core.md](docs/evidence/insmod-core.md)):
 
-- an adapted `.ko` has not completed a real `init_module(2)` on a kernel whose
-  `struct module` layout differs; that needs a QEMU or device gate;
+- an adapted `.ko` has not completed a real `init_module(2)` yet: the
+  same-KMI case (a real `android16-6.12` module whose `.this_module` offsets
+  are moved to a known different, reproducible set) still needs the QEMU gate
+  before any device run;
 - the `[permanent]` episode and the 678-symbol bind have no captured log;
 - running `build/lkmctl-android` on an Android device (that is the droid-hook
   gate; this repository only claims the ELF shape and a host run).
 
-There is no CI workflow in this repository (GitHub Actions usage: 0/9);
-`make test` is the only gate, and it is run in the foreground so a failure is
-never silent.
+The QEMU gate for the layout adaptation is not written yet.  The one CI run
+used so far (`44976400067`) built a throwaway cross-KMI probe and has been
+removed: cross-KMI is out of scope, and that artifact panics a
+`CONFIG_CFI_CLANG=y` device.  `make test` remains the only gate that runs
+today, in the foreground, so a failure is never silent.
 
 ## Why it is small
 
@@ -100,10 +104,19 @@ Each of these was learned from the references and is covered by the tests:
 
 A `.ko` carries the kernel's `struct module` layout in its
 `.gnu.linkonce.this_module` section, generated from the headers it was built
-against.  If those headers differ from the running kernel, the module can load
-but have `init`/`exit` read from the wrong offsets.  The failure mode is a
-module the kernel marks `[permanent]` because `exit` reads as NULL, which then
-refuses to unload (reported on a device; see the evidence notes).
+against.  If those headers differ from the ones the running kernel was built
+with, the module can load but have `init`/`exit` read from the wrong offsets.
+The failure mode is a module the kernel marks `[permanent]` because `exit`
+reads as NULL, which then refuses to unload (reported on a device; see the
+evidence notes).
+
+**Scope: same KMI (`android16-6.12`) only.**  Cross-KMI loading is not a goal
+of this project and is not claimed.  On a device with `CONFIG_CFI_CLANG=y` and
+`CONFIG_CFI_PERMISSIVE` unset it is structurally impossible: a module built by
+another KMI's toolchain carries no matching `__cfi_*` KCFI hashes, so
+`do_one_initcall` dies on the type hash before the module body runs (see
+`docs/evidence/insmod-core.md`).  `lkmctl` adapts the section layout and the
+vermagic; it cannot and does not try to repair CFI or code tags.
 
 `lkmctl` does not require a per-kernel module build.  Before `init_module(2)` it
 reads the running kernel's real layout from `/sys/kernel/btf/vmlinux`, and if
