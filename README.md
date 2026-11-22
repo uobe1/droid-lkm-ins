@@ -45,22 +45,31 @@ Verified on the development host (commit `b6f7e0a`, 2026-11-21):
   `ELF 64-bit LSB executable, ARM aarch64, statically linked`, `readelf -l`
   has no `INTERP`, `readelf -d` has no dynamic section, and it runs on the
   (aarch64) host.
+- **The layout adaptation runs end to end in QEMU** (run `44978474041`,
+  headSha `acb15eb`): a real `android16-6.12` module (`6.12.76-4k`) whose
+  `.this_module` layout was moved to `1584 / 376 / 1512` was adapted back to
+  the kernel's `1600 / 392 / 1528`, loaded by `init_module(2)`, seen in
+  `/proc/modules`, and removed by `rmmod` with no residue.  The gate asserts
+  `LKM_QEMU_{BOOT,LOAD,MODULE_VISIBLE,RMMOD,NO_RESIDUE,OK}` and no
+  `CFI failure|Oops|BUG:|Kernel panic|invalid module format|Unknown symbol`.
+  This is the same-KMI case with a synthetic layout delta; it is not a
+  cross-KMI claim.
 
 Not verified yet (see [docs/evidence/insmod-core.md](docs/evidence/insmod-core.md)):
 
-- an adapted `.ko` has not completed a real `init_module(2)` yet: the
-  same-KMI case (a real `android16-6.12` module whose `.this_module` offsets
-  are moved to a known different, reproducible set) still needs the QEMU gate
-  before any device run;
+- an adapted `.ko` has not been loaded on the **device**: the QEMU gate is
+  green, but no device run has followed it, and the device is
+  `CONFIG_CFI_CLANG=y`, so only a same-KMI module built with the device's own
+  toolchain may be tried there;
 - the `[permanent]` episode and the 678-symbol bind have no captured log;
 - running `build/lkmctl-android` on an Android device (that is the droid-hook
   gate; this repository only claims the ELF shape and a host run).
 
-The QEMU gate for the layout adaptation is not written yet.  The one CI run
-used so far (`44976400067`) built a throwaway cross-KMI probe and has been
-removed: cross-KMI is out of scope, and that artifact panics a
-`CONFIG_CFI_CLANG=y` device.  `make test` remains the only gate that runs
-today, in the foreground, so a failure is never silent.
+Two gates run today: `make test` in the foreground (never silent), and
+`qemu-insmod.yml` for the layout adaptation.  An earlier CI run
+(`44976400067`) built a throwaway cross-KMI probe; it was removed, because
+cross-KMI is out of scope and that artifact panics a `CONFIG_CFI_CLANG=y`
+device.
 
 ## Why it is small
 

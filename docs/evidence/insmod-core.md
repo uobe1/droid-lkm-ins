@@ -211,3 +211,44 @@ Neither run reached `LKM_QEMU_BOOT_OK`, so **no conclusion is drawn about the
 adaptation from CI yet**.  Fix applied but not re-dispatched (the one allowed
 retry was already spent): install `ipxe-qemu` and boot with `-nic none`, so no
 option ROM is requested.
+
+### Gate result: green (2026-11-22)
+
+Run `44978474041`, headSha `acb15eb`, job `gate` in 47s (both jobs inside the
+20-minute limit).  Guest kernel `6.12.76-4k` (`-M virt`, `-nic none`,
+`-kernel/-initrd`, no option ROM).  Module: `ci/samekmi/samekmi_probe.ko`
+built from `/opt/ddk/kdir/android16-6.12`, then patched to
+`1584 / 376 / 1512` by `scripts/synthetic-layout-delta.py`.
+
+Serial log (`qemu-insmod-log`, 287 lines), verbatim:
+
+```
+[    1.985787][   T88] samekmi_probe: no extended symbol version for module_layout
+[    1.988650][   T88] samekmi_probe: loading out-of-tree module taints kernel.
+[    1.989043][   T88] samekmi_probe: module verification failed: signature and/or required key missing - tainting kernel
+[    2.015965][   T88] samekmi_probe: init
+[WARN] module .this_module layout differed from this kernel; adapted to the kernel BTF layout (struct module 1600 bytes)
+[WARN] cannot read the kernel log (No such file or directory); a vermagic retry will be impossible
+symbols: 138140 from /proc/kallsyms
+bind: undefined=1 bound=1 unresolved=0
+Loaded kernel module: /probe.ko
+LKM_QEMU_LOAD_OK
+LKM_QEMU_MODULE_VISIBLE
+[    2.068796][   T93] samekmi_probe: exit
+removed: samekmi_probe
+LKM_QEMU_RMMOD_OK
+LKM_QEMU_NO_RESIDUE
+LKM_QEMU_OK
+```
+
+Reading it: the adaptation was announced (the delta was really exercised), the
+kernel ran `samekmi_probe: init` and `exit`, and the module was visible and
+then removed.  The `[permanent]` marker never appears (the section size and the
+`init`/`exit` relocations were right).  `no extended symbol version for
+module_layout` and the signature taint are warnings the kernel emits for
+out-of-tree modules, not failures: `bound=1 unresolved=0`.
+
+The guest has no `/dev/kmsg`, so the vermagic retry path could not be
+exercised here; that is honest in the log and is covered separately by the
+host tests and by the earlier device attempt (which reached `do_init_module`,
+i.e. the rewrite was accepted).  Not claimed: a device run.
