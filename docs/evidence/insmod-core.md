@@ -184,3 +184,30 @@ delta: take a real `android16-6.12` module whose `.this_module` already
 matches, move `sh_size` and the `init`/`exit` relocations to a second known
 set, and let `lkmctl` adapt them back — in QEMU first, on a device only after
 that gate is green.  No Action has been dispatched for it.
+
+## Same-KMI QEMU gate: run record
+
+Gate: `.github/workflows/qemu-insmod.yml` (jobs `image`, `gate`).  It builds
+the `android16-6.12` Image and `ci/samekmi/samekmi_probe.ko` from the same DDK
+tree, moves the module's `.this_module` layout to `1584 / 376 / 1512` with
+`scripts/synthetic-layout-delta.py`, then boots QEMU and requires
+`LKM_QEMU_{BOOT,LOAD,MODULE_VISIBLE,RMMOD,NO_RESIDUE,OK}` with no
+`CFI failure|Oops|BUG:|Kernel panic|invalid module format|Unknown symbol`.
+
+Local dry-run of the delta and its adaptation (before any dispatch):
+
+```
+fixture: this_module 1600 -> 1584, init 392 -> 376, exit 1528 -> 1512
+target layout: size=1600 name=24 init=392 exit=1528
+adapt rc=0 detaillen=4016  -> this_module 0x640, init 0x188, exit 0x5f8
+```
+
+| run id | when (UTC) | headSha | result |
+|---|---|---|---|
+| `44978026251` | 2026-11-22T02:51Z | `7fab4ba` | **failed** before boot: `apt-get` needs `sudo` on the runner (`Permission denied` on `/var/lib/apt/lists/lock`) |
+| `44978217732` | 2026-11-22T02:56Z | `88c442a` | **failed** before boot: `qemu-system-aarch64: failed to find romfile "efi-virtio.rom"`; `qemu.log` is that one line |
+
+Neither run reached `LKM_QEMU_BOOT_OK`, so **no conclusion is drawn about the
+adaptation from CI yet**.  Fix applied but not re-dispatched (the one allowed
+retry was already spent): install `ipxe-qemu` and boot with `-nic none`, so no
+option ROM is requested.

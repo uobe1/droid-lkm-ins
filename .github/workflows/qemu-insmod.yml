@@ -77,8 +77,8 @@ jobs:
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            qemu-system-arm gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
-            cpio gzip curl ca-certificates
+            qemu-system-arm ipxe-qemu gcc-aarch64-linux-gnu \
+            libc6-dev-arm64-cross cpio gzip curl ca-certificates
           command -v qemu-system-aarch64
           aarch64-linux-gnu-gcc --version | head -1
 
@@ -123,6 +123,7 @@ jobs:
           set +e
           timeout 900 qemu-system-aarch64 \
             -M virt -cpu max -m 3072 -smp 4 -nographic -no-reboot \
+            -nic none \
             -kernel out/Image -initrd initramfs.cpio.gz \
             -append "console=ttyAMA0 rdinit=/init panic=-1 nokaslr selinux=0" \
             > qemu.log 2>&1
