@@ -31,7 +31,8 @@ It is deliberately *not* a full module loader.  See "Why it is small" below.
 
 ## Status
 
-Verified on the development host (commit `b6f7e0a`, 2026-11-21):
+Verified on the development host (commit `b6f7e0a`, 2026-11-21; re-run at
+`1450c01` on 2026-11-27 with the same 29+163+12 checks green):
 
 - `make test` passes: 29 (`lkm_bind_test`) + 163 (`lkm_insmod_test`) + 12
   (`lkmctl_cli_test.sh`) checks, 0 failures, with `-Werror`; the same command
