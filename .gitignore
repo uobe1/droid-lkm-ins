@@ -10,3 +10,4 @@ __pycache__/
 # Local material: gate evidence and notes; not shipped
 docs/evidence/
 docs/notes/
+AGENTS.md
