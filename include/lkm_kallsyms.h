@@ -49,7 +49,7 @@ struct lkm_kallsyms {
 	struct lkm_kallsym *syms;
 	uint32_t count;
 	uint32_t cap;
-	uint32_t truncated;   /* hit the cap: the table is incomplete */
+	uint32_t truncated; /* hit the cap: the table is incomplete */
 };
 
 /*
@@ -71,12 +71,10 @@ LKM_BIND_API int lkm_fs_write_file(void *ctx, const char *path, const char *valu
  * stored, or a negative LKM_BIND_* code.  Kept separate from the file I/O so it
  * can be tested without /proc.
  */
-LKM_BIND_API int lkm_kallsyms_parse(const char *text, size_t len,
-				    struct lkm_kallsyms *out);
+LKM_BIND_API int lkm_kallsyms_parse(const char *text, size_t len, struct lkm_kallsyms *out);
 
 /* Read and parse /proc/kallsyms through `fs`, handling kptr_restrict. */
-LKM_BIND_API int lkm_kallsyms_load(const struct lkm_fs *fs,
-				   struct lkm_kallsyms *out);
+LKM_BIND_API int lkm_kallsyms_load(const struct lkm_fs *fs, struct lkm_kallsyms *out);
 
 LKM_BIND_API void lkm_kallsyms_free(struct lkm_kallsyms *ks);
 
@@ -201,8 +199,7 @@ static int lkm_hex_to_u64(const char *s, size_t n, uint64_t *out)
 	return 1;
 }
 
-LKM_BIND_API int lkm_kallsyms_parse(const char *text, size_t len,
-				    struct lkm_kallsyms *out)
+LKM_BIND_API int lkm_kallsyms_parse(const char *text, size_t len, struct lkm_kallsyms *out)
 {
 	size_t pos = 0;
 
@@ -279,8 +276,7 @@ LKM_BIND_API int lkm_kallsyms_parse(const char *text, size_t len,
 	return (int)out->count;
 }
 
-LKM_BIND_API int lkm_kallsyms_load(const struct lkm_fs *fs,
-				   struct lkm_kallsyms *out)
+LKM_BIND_API int lkm_kallsyms_load(const struct lkm_fs *fs, struct lkm_kallsyms *out)
 {
 	char *text;
 	char old[16];
@@ -299,21 +295,19 @@ LKM_BIND_API int lkm_kallsyms_load(const struct lkm_fs *fs,
 	 */
 	if (fs->write_file && fs->read_file) {
 		size_t got = 0;
-		char *cur = fs->read_file(fs->ctx, "/proc/sys/kernel/kptr_restrict",
-					  &got);
+		char *cur = fs->read_file(fs->ctx, "/proc/sys/kernel/kptr_restrict", &got);
 
 		if (cur) {
 			size_t n = 0;
 
-			while (n < got && n < sizeof(old) - 1 &&
-			       cur[n] != '\n' && cur[n] != '\0') {
+			while (n < got && n < sizeof(old) - 1 && cur[n] != '\n' && cur[n] != '\0') {
 				old[n] = cur[n];
 				n++;
 			}
 			old[n] = '\0';
 			free(cur);
-			if (fs->write_file(fs->ctx, "/proc/sys/kernel/kptr_restrict",
-					   "1") == LKM_BIND_OK)
+			if (fs->write_file(fs->ctx, "/proc/sys/kernel/kptr_restrict", "1") ==
+			    LKM_BIND_OK)
 				relaxed = 1;
 		}
 	}
@@ -328,10 +322,8 @@ LKM_BIND_API int lkm_kallsyms_load(const struct lkm_fs *fs,
 	 * side-effect free.  The restore is retried once before giving up.
 	 */
 	if (relaxed &&
-	    fs->write_file(fs->ctx, "/proc/sys/kernel/kptr_restrict", old) !=
-		    LKM_BIND_OK &&
-	    fs->write_file(fs->ctx, "/proc/sys/kernel/kptr_restrict", old) !=
-		    LKM_BIND_OK) {
+	    fs->write_file(fs->ctx, "/proc/sys/kernel/kptr_restrict", old) != LKM_BIND_OK &&
+	    fs->write_file(fs->ctx, "/proc/sys/kernel/kptr_restrict", old) != LKM_BIND_OK) {
 		lkm_kallsyms_free(out);
 		memset(out, 0, sizeof(*out));
 		return LKM_BIND_EIO;

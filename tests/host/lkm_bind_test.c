@@ -23,13 +23,14 @@
 static int checks;
 static int failures;
 
-#define CHECK(cond, msg) do { \
-	checks++; \
-	if (!(cond)) { \
-		failures++; \
-		printf("FAIL %s\n", msg); \
-	} \
-} while (0)
+#define CHECK(cond, msg)                                                                           \
+	do {                                                                                       \
+		checks++;                                                                          \
+		if (!(cond)) {                                                                     \
+			failures++;                                                                \
+			printf("FAIL %s\n", msg);                                                  \
+		}                                                                                  \
+	} while (0)
 
 /* ---------------- a minimal ELF64 builder ---------------- */
 
@@ -43,9 +44,18 @@ struct builder {
 	size_t len;
 };
 
-static void put16(unsigned char *p, uint16_t v) { memcpy(p, &v, 2); }
-static void put32(unsigned char *p, uint32_t v) { memcpy(p, &v, 4); }
-static void put64(unsigned char *p, uint64_t v) { memcpy(p, &v, 8); }
+static void put16(unsigned char *p, uint16_t v)
+{
+	memcpy(p, &v, 2);
+}
+static void put32(unsigned char *p, uint32_t v)
+{
+	memcpy(p, &v, 4);
+}
+static void put64(unsigned char *p, uint64_t v)
+{
+	memcpy(p, &v, 8);
+}
 
 /* One symbol to place in the table. */
 struct symspec {
@@ -82,9 +92,9 @@ static void build_module(struct builder *b, const struct symspec *syms, int nsym
 
 	/* ELF header */
 	memcpy(eh, "\177ELF", 4);
-	eh[4] = 2;   /* ELFCLASS64 */
-	eh[5] = 1;   /* little endian */
-	eh[6] = 1;   /* version */
+	eh[4] = 2;	     /* ELFCLASS64 */
+	eh[5] = 1;	     /* little endian */
+	eh[6] = 1;	     /* version */
 	put16(eh + 16, 1);   /* ET_REL */
 	put16(eh + 18, 183); /* EM_AARCH64 */
 	put32(eh + 20, 1);
@@ -123,7 +133,7 @@ static void build_module(struct builder *b, const struct symspec *syms, int nsym
 	put64(shdrs + shentsize + 32, symtab_size);
 	put32(shdrs + shentsize + 40, SEC_STRTAB); /* sh_link */
 	put32(shdrs + shentsize + 44, 1);
-	put64(shdrs + shentsize + 56, 24);         /* sh_entsize */
+	put64(shdrs + shentsize + 56, 24); /* sh_entsize */
 	/* [2] .strtab */
 	put32(shdrs + 2 * shentsize + 4, 3); /* SHT_STRTAB */
 	put64(shdrs + 2 * shentsize + 24, strtab_off);
@@ -133,8 +143,7 @@ static void build_module(struct builder *b, const struct symspec *syms, int nsym
 }
 
 /* Read back the symbol entry the binder should have rewritten. */
-static void read_symbol(const struct builder *b, int index, uint16_t *shndx,
-			uint64_t *value)
+static void read_symbol(const struct builder *b, int index, uint16_t *shndx, uint64_t *value)
 {
 	const unsigned char *p = b->buf + 64 + (size_t)index * 24;
 
@@ -163,9 +172,9 @@ static const struct {
 	const char *name;
 	uint64_t addr;
 } kern_syms[] = {
-	{ "printk", 0xffff800010000000ULL },
-	{ "kallsyms_lookup_name", 0xffff800010010000ULL },
-	{ NULL, 0 },
+    {"printk", 0xffff800010000000ULL},
+    {"kallsyms_lookup_name", 0xffff800010010000ULL},
+    {NULL, 0},
 };
 
 /* ---------------- tests ---------------- */
@@ -173,12 +182,12 @@ static const struct {
 static void test_binds_undefined_symbols(void)
 {
 	struct symspec syms[] = {
-		{ "printk", LKM_SHN_UNDEF, 0 },
-		{ "kallsyms_lookup_name", LKM_SHN_UNDEF, 0 },
-		{ "module_local", 3, 0x10 },   /* already defined: must not change */
+	    {"printk", LKM_SHN_UNDEF, 0},
+	    {"kallsyms_lookup_name", LKM_SHN_UNDEF, 0},
+	    {"module_local", 3, 0x10}, /* already defined: must not change */
 	};
 	struct builder b;
-	struct lkm_symtab st = { (void *)kern_syms, fake_lookup, NULL };
+	struct lkm_symtab st = {(void *)kern_syms, fake_lookup, NULL};
 	struct lkm_bind_stats stats;
 	char diag[256] = "";
 	uint16_t shndx;
@@ -204,11 +213,11 @@ static void test_binds_undefined_symbols(void)
 static void test_unresolved_is_reported_not_fatal(void)
 {
 	struct symspec syms[] = {
-		{ "printk", LKM_SHN_UNDEF, 0 },
-		{ "does_not_exist", LKM_SHN_UNDEF, 0 },
+	    {"printk", LKM_SHN_UNDEF, 0},
+	    {"does_not_exist", LKM_SHN_UNDEF, 0},
 	};
 	struct builder b;
-	struct lkm_symtab st = { (void *)kern_syms, fake_lookup, NULL };
+	struct lkm_symtab st = {(void *)kern_syms, fake_lookup, NULL};
 	struct lkm_bind_stats stats;
 	char diag[256] = "";
 	uint16_t shndx;
@@ -233,7 +242,7 @@ static void test_unresolved_is_reported_not_fatal(void)
 static void test_rejects_non_relocatable(void)
 {
 	struct builder b;
-	struct lkm_symtab st = { (void *)kern_syms, fake_lookup, NULL };
+	struct lkm_symtab st = {(void *)kern_syms, fake_lookup, NULL};
 	char diag[256] = "";
 
 	build_module(&b, NULL, 0);
@@ -255,9 +264,9 @@ static void test_rejects_non_relocatable(void)
 static void test_rejects_truncated(void)
 {
 	struct builder b;
-	struct lkm_symtab st = { (void *)kern_syms, fake_lookup, NULL };
+	struct lkm_symtab st = {(void *)kern_syms, fake_lookup, NULL};
 	char diag[256] = "";
-	struct symspec syms[] = { { "printk", LKM_SHN_UNDEF, 0 } };
+	struct symspec syms[] = {{"printk", LKM_SHN_UNDEF, 0}};
 
 	build_module(&b, syms, 1);
 	/* Point the section table past the end of the buffer. */
@@ -286,10 +295,9 @@ static void test_suffix_stripping(void)
 
 static void test_kallsyms_parse_stops_at_modules(void)
 {
-	const char *text =
-		"ffff800010000000 T printk\n"
-		"ffff800010010000 T kallsyms_lookup_name\n"
-		"ffffffffc0001000 t module_symbol\tmymod\t[mymod]\n";
+	const char *text = "ffff800010000000 T printk\n"
+			   "ffff800010010000 T kallsyms_lookup_name\n"
+			   "ffffffffc0001000 t module_symbol\tmymod\t[mymod]\n";
 	struct lkm_kallsyms ks;
 
 	memset(&ks, 0, sizeof(ks));
@@ -304,9 +312,8 @@ static void test_kallsyms_parse_stops_at_modules(void)
 static void test_kallsyms_parse_skips_zero_addresses(void)
 {
 	/* kptr_restrict defeated the read: every address is zero. */
-	const char *text =
-		"0000000000000000 T printk\n"
-		"0000000000000000 T kallsyms_lookup_name\n";
+	const char *text = "0000000000000000 T printk\n"
+			   "0000000000000000 T kallsyms_lookup_name\n";
 	struct lkm_kallsyms ks;
 
 	memset(&ks, 0, sizeof(ks));
@@ -321,9 +328,8 @@ static void test_searched_symbols_do_not_hit_module_entries(void)
 	 * A kernel symbol and a module symbol with the same name: the kernel one
 	 * must win, which is exactly why parsing stops at the first module line.
 	 */
-	const char *text =
-		"ffff800010000000 T printk\n"
-		"ffffffffc0002000 T printk\totherm\t[otherm]\n";
+	const char *text = "ffff800010000000 T printk\n"
+			   "ffffffffc0002000 T printk\totherm\t[otherm]\n";
 	struct lkm_kallsyms ks;
 	struct lkm_kallsyms_lookup_ctx lc;
 
@@ -390,15 +396,13 @@ static int fake_write(void *ctx, const char *path, const char *value)
 
 static void test_load_restores_kptr_restrict(void)
 {
-	struct fake_fs f = { .kptr = 2 };
-	struct lkm_fs fs = { .ctx = &f, .read_file = fake_read,
-			     .write_file = fake_write };
+	struct fake_fs f = {.kptr = 2};
+	struct lkm_fs fs = {.ctx = &f, .read_file = fake_read, .write_file = fake_write};
 	struct lkm_kallsyms ks;
 	int ret = lkm_kallsyms_load(&fs, &ks);
 
 	CHECK(ret > 0, "load must parse the kernel symbols");
-	CHECK(f.nwrites == 2 && !strcmp(f.writes[0], "1") &&
-	      !strcmp(f.writes[1], "2"),
+	CHECK(f.nwrites == 2 && !strcmp(f.writes[0], "1") && !strcmp(f.writes[1], "2"),
 	      "load must relax kptr_restrict, then restore the old value");
 	CHECK(f.kptr == 2, "kptr_restrict must end at its original value");
 	lkm_kallsyms_free(&ks);
@@ -406,14 +410,12 @@ static void test_load_restores_kptr_restrict(void)
 
 static void test_load_fails_when_kptr_restrict_cannot_be_restored(void)
 {
-	struct fake_fs f = { .kptr = 2, .fail_restore = 1 };
-	struct lkm_fs fs = { .ctx = &f, .read_file = fake_read,
-			     .write_file = fake_write };
+	struct fake_fs f = {.kptr = 2, .fail_restore = 1};
+	struct lkm_fs fs = {.ctx = &f, .read_file = fake_read, .write_file = fake_write};
 	struct lkm_kallsyms ks;
 	int ret = lkm_kallsyms_load(&fs, &ks);
 
-	CHECK(ret == LKM_BIND_EIO,
-	      "a failed restore must abort the load, not be swallowed");
+	CHECK(ret == LKM_BIND_EIO, "a failed restore must abort the load, not be swallowed");
 	CHECK(ks.syms == NULL && ks.count == 0,
 	      "the parsed symbols must be released on the error path");
 	CHECK(f.nwrites == 3, "the restore must be retried once");

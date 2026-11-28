@@ -50,13 +50,13 @@ extern "C" {
 
 /* Error codes mirror the kernel's negative errno values where one applies. */
 #define LKM_OK 0
-#define LKM_EINVAL (-22)   /* malformed input */
-#define LKM_ENOENT (-2)    /* missing section or symbol */
-#define LKM_ENOMEM (-12)   /* allocation refused by the host */
-#define LKM_ENOEXEC (-8)   /* not an ELF relocatable object */
-#define LKM_EBADARCH (-8)  /* machine is not the requested architecture */
+#define LKM_EINVAL (-22)     /* malformed input */
+#define LKM_ENOENT (-2)	     /* missing section or symbol */
+#define LKM_ENOMEM (-12)     /* allocation refused by the host */
+#define LKM_ENOEXEC (-8)     /* not an ELF relocatable object */
+#define LKM_EBADARCH (-8)    /* machine is not the requested architecture */
 #define LKM_EOPNOTSUPP (-95) /* unsupported relocation or feature */
-#define LKM_EMSGSIZE (-90) /* image larger than the configured limit */
+#define LKM_EMSGSIZE (-90)   /* image larger than the configured limit */
 
 /* AArch64 ELF machine number. */
 #define LKM_EM_AARCH64 183
@@ -128,7 +128,7 @@ struct lkm_limits {
 
 /* Result of parsing .modinfo.  Fields point into the loaded image. */
 struct lkm_modinfo {
-	const char *vermagic;   /* "6.12.30-android16-5 SMP preempt mod_unload ..." */
+	const char *vermagic; /* "6.12.30-android16-5 SMP preempt mod_unload ..." */
 	const char *name;
 	const char *license;
 	const char *depends;
@@ -138,10 +138,10 @@ struct lkm_modinfo {
 
 /* One loaded image.  Treat the layout as opaque. */
 struct lkm_image {
-	void *base;          /* lowest mapped address */
-	size_t size;         /* total mapping size */
-	void *init_fn;       /* pointer to the module's init */
-	void *exit_fn;       /* pointer to the module's exit, may be NULL */
+	void *base;    /* lowest mapped address */
+	size_t size;   /* total mapping size */
+	void *init_fn; /* pointer to the module's init */
+	void *exit_fn; /* pointer to the module's exit, may be NULL */
 	struct lkm_modinfo info;
 	const char *module_name;
 	/* Internals. */
@@ -151,7 +151,7 @@ struct lkm_image {
 /* Diagnostics for the last failure, for logs and panic forensics. */
 struct lkm_diag {
 	int err;
-	int section_index;   /* -1 when not section-specific */
+	int section_index; /* -1 when not section-specific */
 	uint32_t reloc_index;
 	uint32_t reloc_type;
 	const char *symbol;
@@ -168,8 +168,8 @@ struct lkm_diag {
  * LKM_* code and, when `diag` is non-NULL, describes the first problem.
  */
 LKM_API int lkm_load(const void *data, size_t size, const struct lkm_host *host,
-	     const struct lkm_limits *limits, struct lkm_image **out,
-	     struct lkm_diag *diag);
+		     const struct lkm_limits *limits, struct lkm_image **out,
+		     struct lkm_diag *diag);
 
 /* Release an image returned by lkm_load(). */
 LKM_API void lkm_unload(struct lkm_image *img, const struct lkm_host *host);
@@ -190,7 +190,7 @@ LKM_API const char *lkm_image_vermagic(const struct lkm_image *img);
  * negative otherwise, and reports the first difference in `detail`.
  */
 LKM_API int lkm_check_vermagic(const char *module_vermagic, const char *kernel_vermagic,
-		       char *detail, size_t detail_len);
+			       char *detail, size_t detail_len);
 
 /* The module's own entry points, as addresses inside the image. */
 LKM_API void *lkm_image_init(const struct lkm_image *img);
@@ -275,7 +275,7 @@ struct lkm_rela {
 struct lkm_sec {
 	const struct lkm_shdr *sh;
 	const char *name;
-	void *addr;      /* non-NOBITS: destination inside the image */
+	void *addr; /* non-NOBITS: destination inside the image */
 };
 
 struct lkm_priv {
@@ -318,8 +318,8 @@ static int lkm_section_range_ok(const struct lkm_shdr *sh, size_t size)
 	return 1;
 }
 
-static void lkm_set_detail(struct lkm_diag *diag, int err, const char *fmt,
-			   const char *a, uint32_t b)
+static void lkm_set_detail(struct lkm_diag *diag, int err, const char *fmt, const char *a,
+			   uint32_t b)
 {
 	if (!diag)
 		return;
@@ -360,24 +360,20 @@ static void lkm_set_detail(struct lkm_diag *diag, int err, const char *fmt,
 
 /* ---- relocation helpers ---- */
 
-static int lkm_apply_reloc(uint32_t type, void *loc, uint64_t sym,
-			   int64_t addend, const char *sym_name)
+static int lkm_apply_reloc(uint32_t type, void *loc, uint64_t sym, int64_t addend,
+			   const char *sym_name)
 {
 	uint64_t s = sym;
 	int64_t a = addend;
 	uint32_t insn;
 
-	if ((uintptr_t)loc & 3 && (type == LKM_R_AARCH64_JUMP26 ||
-				   type == LKM_R_AARCH64_CALL26 ||
-				   type == LKM_R_AARCH64_CONDBR19 ||
-				   type == LKM_R_AARCH64_TSTBR14 ||
-				   type == LKM_R_AARCH64_ADR_PREL_PG_HI21 ||
-				   type == LKM_R_AARCH64_ADD_ABS_LO12_NC ||
-				   type == LKM_R_AARCH64_LDST8_ABS_LO12_NC ||
-				   type == LKM_R_AARCH64_LDST16_ABS_LO12_NC ||
-				   type == LKM_R_AARCH64_LDST32_ABS_LO12_NC ||
-				   type == LKM_R_AARCH64_LDST64_ABS_LO12_NC ||
-				   type == LKM_R_AARCH64_LDST128_ABS_LO12_NC))
+	if ((uintptr_t)loc & 3 &&
+	    (type == LKM_R_AARCH64_JUMP26 || type == LKM_R_AARCH64_CALL26 ||
+	     type == LKM_R_AARCH64_CONDBR19 || type == LKM_R_AARCH64_TSTBR14 ||
+	     type == LKM_R_AARCH64_ADR_PREL_PG_HI21 || type == LKM_R_AARCH64_ADD_ABS_LO12_NC ||
+	     type == LKM_R_AARCH64_LDST8_ABS_LO12_NC || type == LKM_R_AARCH64_LDST16_ABS_LO12_NC ||
+	     type == LKM_R_AARCH64_LDST32_ABS_LO12_NC || type == LKM_R_AARCH64_LDST64_ABS_LO12_NC ||
+	     type == LKM_R_AARCH64_LDST128_ABS_LO12_NC))
 		return LKM_EINVAL;
 
 	switch (type) {
@@ -494,12 +490,20 @@ static int lkm_apply_reloc(uint32_t type, void *loc, uint64_t sym,
 		(void)sym_name;
 		switch (type) {
 		case LKM_R_AARCH64_MOVW_UABS_G0:
-		case LKM_R_AARCH64_MOVW_UABS_G0_NC: shift = 0; break;
+		case LKM_R_AARCH64_MOVW_UABS_G0_NC:
+			shift = 0;
+			break;
 		case LKM_R_AARCH64_MOVW_UABS_G1:
-		case LKM_R_AARCH64_MOVW_UABS_G1_NC: shift = 16; break;
+		case LKM_R_AARCH64_MOVW_UABS_G1_NC:
+			shift = 16;
+			break;
 		case LKM_R_AARCH64_MOVW_UABS_G2:
-		case LKM_R_AARCH64_MOVW_UABS_G2_NC: shift = 32; break;
-		default: shift = 48; break;
+		case LKM_R_AARCH64_MOVW_UABS_G2_NC:
+			shift = 32;
+			break;
+		default:
+			shift = 48;
+			break;
 		}
 		imm = (uint32_t)((v >> shift) & 0xffffu);
 		insn = *(uint32_t *)loc;
@@ -513,8 +517,8 @@ static int lkm_apply_reloc(uint32_t type, void *loc, uint64_t sym,
 	}
 }
 
-static const char *lkm_sec_name(const struct lkm_ehdr *eh, const char *base,
-				size_t size, uint16_t idx)
+static const char *lkm_sec_name(const struct lkm_ehdr *eh, const char *base, size_t size,
+				uint16_t idx)
 {
 	const struct lkm_shdr *sh;
 	const char *strtab;
@@ -522,8 +526,7 @@ static const char *lkm_sec_name(const struct lkm_ehdr *eh, const char *base,
 
 	if (eh->e_shstrndx >= eh->e_shnum)
 		return NULL;
-	sh = (const struct lkm_shdr *)((const char *)eh + eh->e_shoff) +
-	     eh->e_shstrndx;
+	sh = (const struct lkm_shdr *)((const char *)eh + eh->e_shoff) + eh->e_shstrndx;
 	if (!lkm_section_range_ok(sh, size))
 		return NULL;
 	strtab = base + sh->sh_offset;
@@ -534,8 +537,7 @@ static const char *lkm_sec_name(const struct lkm_ehdr *eh, const char *base,
 }
 
 int lkm_load(const void *data, size_t size, const struct lkm_host *host,
-	     const struct lkm_limits *limits, struct lkm_image **out,
-	     struct lkm_diag *diag)
+	     const struct lkm_limits *limits, struct lkm_image **out, struct lkm_diag *diag)
 {
 	const char *base = (const char *)data;
 	const struct lkm_ehdr *eh;
@@ -557,15 +559,13 @@ int lkm_load(const void *data, size_t size, const struct lkm_host *host,
 		diag->symbol = NULL;
 		diag->detail[0] = '\0';
 	}
-	if (!data || size < 4 || !host || !host->alloc || !host->free ||
-	    !host->resolve || !out)
+	if (!data || size < 4 || !host || !host->alloc || !host->free || !host->resolve || !out)
 		return LKM_EINVAL;
 
 	eh = (const struct lkm_ehdr *)data;
 	if (memcmp(eh->e_ident, "\177ELF", 4) != 0)
 		return LKM_ENOEXEC;
-	if (eh->e_ident[4] != 2 /* ELFCLASS64 */ ||
-	    eh->e_ident[5] != 1 /* ELFDATA2LSB */)
+	if (eh->e_ident[4] != 2 /* ELFCLASS64 */ || eh->e_ident[5] != 1 /* ELFDATA2LSB */)
 		return LKM_ENOEXEC;
 	if (eh->e_type != LKM_ET_REL)
 		return LKM_ENOEXEC;
@@ -574,15 +574,13 @@ int lkm_load(const void *data, size_t size, const struct lkm_host *host,
 	if (!lkm_mem_ok(eh, size))
 		return LKM_EINVAL;
 
-	lim.max_image = limits && limits->max_image ? limits->max_image
-						   : (size_t)1 << 30;
+	lim.max_image = limits && limits->max_image ? limits->max_image : (size_t)1 << 30;
 	lim.max_relocs = limits && limits->max_relocs ? limits->max_relocs : 4000000u;
 	lim.max_sections = limits && limits->max_sections ? limits->max_sections : 4096u;
 	lim.max_symbols = limits && limits->max_symbols ? limits->max_symbols : 1000000u;
 
 	if (eh->e_shnum > lim.max_sections) {
-		lkm_set_detail(diag, LKM_EMSGSIZE, "too many sections: %u", NULL,
-			       eh->e_shnum);
+		lkm_set_detail(diag, LKM_EMSGSIZE, "too many sections: %u", NULL, eh->e_shnum);
 		return LKM_EMSGSIZE;
 	}
 
@@ -594,8 +592,8 @@ int lkm_load(const void *data, size_t size, const struct lkm_host *host,
 	memset(priv, 0, sizeof(*priv));
 	priv->host = host;
 	priv->nsecs = eh->e_shnum;
-	priv->secs = (struct lkm_sec *)host->alloc(host->ctx,
-			sizeof(struct lkm_sec) * (size_t)eh->e_shnum);
+	priv->secs =
+	    (struct lkm_sec *)host->alloc(host->ctx, sizeof(struct lkm_sec) * (size_t)eh->e_shnum);
 	if (!priv->secs) {
 		ret = LKM_ENOMEM;
 		goto fail;
@@ -609,8 +607,7 @@ int lkm_load(const void *data, size_t size, const struct lkm_host *host,
 		priv->secs[i].name = lkm_sec_name(eh, base, size, (uint16_t)i);
 
 		if (!lkm_section_range_ok(sh, size)) {
-			lkm_set_detail(diag, LKM_EINVAL, "section %u out of bounds",
-				       NULL, i);
+			lkm_set_detail(diag, LKM_EINVAL, "section %u out of bounds", NULL, i);
 			ret = LKM_EINVAL;
 			goto fail;
 		}
@@ -618,8 +615,7 @@ int lkm_load(const void *data, size_t size, const struct lkm_host *host,
 			max_align = (size_t)sh->sh_addralign;
 		if (sh->sh_type == LKM_SHT_NOBITS || sh->sh_size == 0)
 			continue;
-		if (sh->sh_size > lim.max_image ||
-		    total > lim.max_image - sh->sh_size) {
+		if (sh->sh_size > lim.max_image || total > lim.max_image - sh->sh_size) {
 			lkm_set_detail(diag, LKM_EMSGSIZE, "image exceeds limit at section %u",
 				       NULL, i);
 			ret = LKM_EMSGSIZE;
@@ -684,11 +680,9 @@ int lkm_load(const void *data, size_t size, const struct lkm_host *host,
 
 		if (sh->sh_type != LKM_SHT_SYMTAB)
 			continue;
-		if (sh->sh_entsize != sizeof(struct lkm_sym) ||
-		    sh->sh_link >= eh->e_shnum) {
+		if (sh->sh_entsize != sizeof(struct lkm_sym) || sh->sh_link >= eh->e_shnum) {
 			ret = LKM_EINVAL;
-			lkm_set_detail(diag, ret, "malformed .symtab at section %u",
-				       NULL, i);
+			lkm_set_detail(diag, ret, "malformed .symtab at section %u", NULL, i);
 			goto fail;
 		}
 		priv->syms = (const struct lkm_sym *)(base + sh->sh_offset);
@@ -711,8 +705,7 @@ int lkm_load(const void *data, size_t size, const struct lkm_host *host,
 		goto fail;
 	}
 
-	priv->sym_value = (uint64_t *)host->alloc(host->ctx,
-			sizeof(uint64_t) * priv->nsyms);
+	priv->sym_value = (uint64_t *)host->alloc(host->ctx, sizeof(uint64_t) * priv->nsyms);
 	priv->sym_local = (unsigned char *)host->alloc(host->ctx, priv->nsyms);
 	if (!priv->sym_value || !priv->sym_local) {
 		ret = LKM_ENOMEM;
@@ -734,8 +727,7 @@ int lkm_load(const void *data, size_t size, const struct lkm_host *host,
 		}
 		if (sym->st_name >= priv->strtab_size) {
 			ret = LKM_EINVAL;
-			lkm_set_detail(diag, ret, "symbol %u name out of bounds",
-				       NULL, i);
+			lkm_set_detail(diag, ret, "symbol %u name out of bounds", NULL, i);
 			goto fail;
 		}
 		name = priv->strtab + sym->st_name;
@@ -745,8 +737,7 @@ int lkm_load(const void *data, size_t size, const struct lkm_host *host,
 
 			if (!addr) {
 				ret = LKM_ENOENT;
-				lkm_set_detail(diag, ret, "unresolved symbol: %s",
-					       name, 0);
+				lkm_set_detail(diag, ret, "unresolved symbol: %s", name, 0);
 				if (diag)
 					diag->symbol = name;
 				goto fail;
@@ -764,8 +755,7 @@ int lkm_load(const void *data, size_t size, const struct lkm_host *host,
 			/* Common symbols are not produced for kernel modules;
 			 * refuse rather than guess at an allocation. */
 			ret = LKM_EOPNOTSUPP;
-			lkm_set_detail(diag, ret, "common symbol unsupported: %s",
-				       name, 0);
+			lkm_set_detail(diag, ret, "common symbol unsupported: %s", name, 0);
 			if (diag)
 				diag->symbol = name;
 			goto fail;
@@ -777,12 +767,11 @@ int lkm_load(const void *data, size_t size, const struct lkm_host *host,
 		}
 		if (!priv->secs[sym->st_shndx].addr) {
 			ret = LKM_EINVAL;
-			lkm_set_detail(diag, ret, "symbol %s in unloaded section",
-				       name, 0);
+			lkm_set_detail(diag, ret, "symbol %s in unloaded section", name, 0);
 			goto fail;
 		}
-		priv->sym_value[i] = (uint64_t)(uintptr_t)priv->secs[sym->st_shndx].addr +
-				     sym->st_value;
+		priv->sym_value[i] =
+		    (uint64_t)(uintptr_t)priv->secs[sym->st_shndx].addr + sym->st_value;
 		priv->sym_local[i] = (bind == LKM_STB_LOCAL);
 	}
 
@@ -801,8 +790,7 @@ int lkm_load(const void *data, size_t size, const struct lkm_host *host,
 			if (sh->sh_entsize != sizeof(struct lkm_rela) ||
 			    sh->sh_info >= eh->e_shnum) {
 				ret = LKM_EINVAL;
-				lkm_set_detail(diag, ret, "malformed reloc section %u",
-					       NULL, i);
+				lkm_set_detail(diag, ret, "malformed reloc section %u", NULL, i);
 				goto fail;
 			}
 			relas = (const struct lkm_rela *)(base + sh->sh_offset);
@@ -814,8 +802,8 @@ int lkm_load(const void *data, size_t size, const struct lkm_host *host,
 			}
 			if (!priv->secs[sh->sh_info].addr && nrel) {
 				ret = LKM_EINVAL;
-				lkm_set_detail(diag, ret, "relocs target missing section %u",
-					       NULL, sh->sh_info);
+				lkm_set_detail(diag, ret, "relocs target missing section %u", NULL,
+					       sh->sh_info);
 				goto fail;
 			}
 			for (r = 0; r < nrel; r++) {
@@ -929,8 +917,7 @@ int lkm_load(const void *data, size_t size, const struct lkm_host *host,
 	}
 
 	if (host->protect && img->base && img->size)
-		host->protect(host->ctx, img->base, img->size,
-			      LKM_PROT_READ | LKM_PROT_EXEC);
+		host->protect(host->ctx, img->base, img->size, LKM_PROT_READ | LKM_PROT_EXEC);
 
 	*out = img;
 	return LKM_OK;
@@ -996,8 +983,8 @@ void *lkm_image_exit(const struct lkm_image *img)
  * this check is the reason "insmod: invalid module format" appears with no
  * useful message, so we surface the first differing field instead.
  */
-int lkm_check_vermagic(const char *module_vermagic, const char *kernel_vermagic,
-		       char *detail, size_t detail_len)
+int lkm_check_vermagic(const char *module_vermagic, const char *kernel_vermagic, char *detail,
+		       size_t detail_len)
 {
 	const char *m_rel_end;
 	const char *k_rel_end;

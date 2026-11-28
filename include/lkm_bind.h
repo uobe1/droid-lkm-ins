@@ -72,10 +72,10 @@ struct lkm_symtab {
 };
 
 struct lkm_bind_stats {
-	uint32_t undefined;   /* SHN_UNDEF symbols found */
-	uint32_t bound;       /* rewritten to SHN_ABS */
-	uint32_t unresolved;  /* left undefined */
-	uint32_t relocated;   /* RELA entries whose target symbol was bound */
+	uint32_t undefined;  /* SHN_UNDEF symbols found */
+	uint32_t bound;	     /* rewritten to SHN_ABS */
+	uint32_t unresolved; /* left undefined */
+	uint32_t relocated;  /* RELA entries whose target symbol was bound */
 };
 
 /*
@@ -88,10 +88,8 @@ struct lkm_bind_stats {
  * other return the buffer must be discarded: a partially bound image would be
  * rejected by the kernel with a misleading error.
  */
-LKM_BIND_API int lkm_bind_symbols(void *data, size_t size,
-				  const struct lkm_symtab *symtab,
-				  struct lkm_bind_stats *stats,
-				  char *diag, size_t diag_len);
+LKM_BIND_API int lkm_bind_symbols(void *data, size_t size, const struct lkm_symtab *symtab,
+				  struct lkm_bind_stats *stats, char *diag, size_t diag_len);
 
 /*
  * Normalize a kallsyms name so lookup succeeds for the plain symbol name:
@@ -101,8 +99,7 @@ LKM_BIND_API int lkm_bind_symbols(void *data, size_t size,
  * `buf` and returns that.  Kept public because the caller usually needs the same
  * rule when it builds its own symbol table.
  */
-LKM_BIND_API const char *lkm_strip_symbol_suffix(const char *name,
-						 char *buf, size_t buf_len);
+LKM_BIND_API const char *lkm_strip_symbol_suffix(const char *name, char *buf, size_t buf_len);
 
 LKM_BIND_API uint32_t lkm_bind_abi_version(void);
 
@@ -199,8 +196,7 @@ static int lkm_bind_range(uint64_t off, uint64_t size, size_t total)
 	return 1;
 }
 
-LKM_BIND_API const char *lkm_strip_symbol_suffix(const char *name,
-						 char *buf, size_t buf_len)
+LKM_BIND_API const char *lkm_strip_symbol_suffix(const char *name, char *buf, size_t buf_len)
 {
 	size_t i, n;
 
@@ -233,10 +229,8 @@ LKM_BIND_API const char *lkm_strip_symbol_suffix(const char *name,
 	return buf;
 }
 
-LKM_BIND_API int lkm_bind_symbols(void *data, size_t size,
-				  const struct lkm_symtab *symtab,
-				  struct lkm_bind_stats *stats,
-				  char *diag, size_t diag_len)
+LKM_BIND_API int lkm_bind_symbols(void *data, size_t size, const struct lkm_symtab *symtab,
+				  struct lkm_bind_stats *stats, char *diag, size_t diag_len)
 {
 	struct lkm_elf_ehdr *eh;
 	struct lkm_elf_shdr *shdrs;
@@ -261,8 +255,7 @@ LKM_BIND_API int lkm_bind_symbols(void *data, size_t size,
 	eh = (struct lkm_elf_ehdr *)data;
 	if (memcmp(eh->e_ident, "\177ELF", 4) || eh->e_ident[4] != LKM_ELFCLASS64 ||
 	    eh->e_ident[5] != LKM_ELFDATA2LSB || eh->e_type != LKM_ET_REL) {
-		lkm_bind_set_diag(diag, diag_len,
-				  "not a little-endian ELF64 relocatable object");
+		lkm_bind_set_diag(diag, diag_len, "not a little-endian ELF64 relocatable object");
 		return LKM_BIND_ENOEXEC;
 	}
 	if (eh->e_machine != LKM_EM_AARCH64) {

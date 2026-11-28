@@ -73,20 +73,19 @@ struct opts {
 
 static void usage(void)
 {
-	fprintf(stderr,
-		"usage: lkmctl insmod [--force] <module.ko> [param=value ...]\n"
-		"       lkmctl rmmod  <name> [--force]\n"
-		"       lkmctl bind   <module.ko>\n"
-		"       lkmctl check  <module.ko>\n"
-		"\n"
-		"insmod  bind undefined symbols, then call init_module(2)\n"
-		"rmmod   call delete_module(2); --force passes O_TRUNC to the kernel\n"
-		"bind    rewrite a copy in memory and report (no load)\n"
-		"check   only report which symbols resolve\n"
-		"\n"
-		"--force  insmod only: allow a module whose struct module layout cannot\n"
-		"         be adapted to this kernel.  Requires a TTY and typing the\n"
-		"         confirmation sentence twice; the module may be unloadable.\n");
+	fprintf(stderr, "usage: lkmctl insmod [--force] <module.ko> [param=value ...]\n"
+			"       lkmctl rmmod  <name> [--force]\n"
+			"       lkmctl bind   <module.ko>\n"
+			"       lkmctl check  <module.ko>\n"
+			"\n"
+			"insmod  bind undefined symbols, then call init_module(2)\n"
+			"rmmod   call delete_module(2); --force passes O_TRUNC to the kernel\n"
+			"bind    rewrite a copy in memory and report (no load)\n"
+			"check   only report which symbols resolve\n"
+			"\n"
+			"--force  insmod only: allow a module whose struct module layout cannot\n"
+			"         be adapted to this kernel.  Requires a TTY and typing the\n"
+			"         confirmation sentence twice; the module may be unloadable.\n");
 }
 
 static const char *uname_release(void)
@@ -119,8 +118,7 @@ static void report_vermagic(const struct lkm_buffer *img)
 	}
 	printf("vermagic: %s\n", mv);
 	printf("kernel:   %s\n", uname_release());
-	if (lkm_check_vermagic(mv, uname_release(), detail, sizeof(detail)) !=
-	    LKM_OK)
+	if (lkm_check_vermagic(mv, uname_release(), detail, sizeof(detail)) != LKM_OK)
 		printf("mismatch: %s\n", detail);
 }
 
@@ -141,7 +139,7 @@ struct kmsg_ctx {
 
 static int kmsg_open(struct kmsg_ctx *kmsg)
 {
-	static const char *paths[] = { "/dev/kmsg", "/kmsg" };
+	static const char *paths[] = {"/dev/kmsg", "/kmsg"};
 	char record[16384];
 	size_t i;
 
@@ -233,14 +231,14 @@ static int cli_load(void *ctx, const void *data, size_t len, const char *params)
 
 int main(int argc, char **argv)
 {
-	struct opts opt = { 0 };
+	struct opts opt = {0};
 	struct lkm_kallsyms ks;
 	struct lkm_kallsyms_lookup_ctx lc;
 	struct lkm_symtab st;
 	struct lkm_bind_stats stats;
-	struct lkm_fs fs = { NULL, lkm_fs_read_file, lkm_fs_write_file };
+	struct lkm_fs fs = {NULL, lkm_fs_read_file, lkm_fs_write_file};
 	struct lkm_buffer img;
-	struct lkm_insmod_ops ops = { NULL, cli_load, kmsg_read_new };
+	struct lkm_insmod_ops ops = {NULL, cli_load, kmsg_read_new};
 	struct lkm_insmod_result result;
 	struct kmsg_ctx kmsg;
 	char diag[256] = "";
@@ -275,8 +273,8 @@ int main(int argc, char **argv)
 		if (ret != 0) {
 			int err = errno;
 
-			fprintf(stderr, "lkmctl: delete_module(%s) failed: %s (%d)\n",
-				argv[2], strerror(err), err);
+			fprintf(stderr, "lkmctl: delete_module(%s) failed: %s (%d)\n", argv[2],
+				strerror(err), err);
 			switch (err) {
 			case EPERM:
 				fprintf(stderr, "  not permitted: run as root in a domain "
@@ -336,8 +334,7 @@ int main(int argc, char **argv)
 	} else {
 		for (i = 2; i < argc; i++) {
 			if (!strcmp(argv[i], "--force")) {
-				fprintf(stderr,
-					"lkmctl: --force is only valid for insmod\n");
+				fprintf(stderr, "lkmctl: --force is only valid for insmod\n");
 				return 2;
 			}
 		}
@@ -360,8 +357,8 @@ int main(int argc, char **argv)
 		int r = lkm_canonicalize_path(args[2], resolved, sizeof(resolved));
 
 		if (r != 0) {
-			fprintf(stderr, "lkmctl: cannot resolve module path %s: %s\n",
-				args[2], strerror(r));
+			fprintf(stderr, "lkmctl: cannot resolve module path %s: %s\n", args[2],
+				strerror(r));
 			return 1;
 		}
 		opt.module = resolved;
@@ -407,9 +404,8 @@ int main(int argc, char **argv)
 	memset(&ks, 0, sizeof(ks));
 	ret = lkm_kallsyms_load(&fs, &ks);
 	if (ret == LKM_BIND_EIO) {
-		fprintf(stderr,
-			"lkmctl: could not restore /proc/sys/kernel/kptr_restrict.\n"
-			"  It is left at 1; set it back to its previous value by hand.\n");
+		fprintf(stderr, "lkmctl: could not restore /proc/sys/kernel/kptr_restrict.\n"
+				"  It is left at 1; set it back to its previous value by hand.\n");
 		lkm_buffer_free(&img);
 		free(joined);
 		return 1;
@@ -417,13 +413,13 @@ int main(int argc, char **argv)
 	if (ret < 0) {
 		fprintf(stderr,
 			"lkmctl: cannot read usable symbols from /proc/kallsyms (%d).\n"
-			"  kptr_restrict may be hiding addresses; run as root.\n", ret);
+			"  kptr_restrict may be hiding addresses; run as root.\n",
+			ret);
 		lkm_buffer_free(&img);
 		free(joined);
 		return 1;
 	}
-	printf("symbols: %u from /proc/kallsyms%s\n", ks.count,
-	       ks.truncated ? " (truncated)" : "");
+	printf("symbols: %u from /proc/kallsyms%s\n", ks.count, ks.truncated ? " (truncated)" : "");
 
 	lc.ks = &ks;
 	lc.misses = 0;
@@ -433,9 +429,8 @@ int main(int argc, char **argv)
 
 	memset(&stats, 0, sizeof(stats));
 	ret = lkm_bind_symbols(img.data, img.len, &st, &stats, diag, sizeof(diag));
-	printf("bind: undefined=%u bound=%u unresolved=%u%s%s\n",
-	       stats.undefined, stats.bound, stats.unresolved,
-	       diag[0] ? " -- " : "", diag);
+	printf("bind: undefined=%u bound=%u unresolved=%u%s%s\n", stats.undefined, stats.bound,
+	       stats.unresolved, diag[0] ? " -- " : "", diag);
 	if (ret != LKM_BIND_OK) {
 		fprintf(stderr, "lkmctl: binding failed: %s\n", diag);
 		lkm_buffer_free(&img);
@@ -444,8 +439,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	if (opt.verbose && stats.unresolved)
-		printf("note: %u symbol(s) left for the kernel to resolve\n",
-		       stats.unresolved);
+		printf("note: %u symbol(s) left for the kernel to resolve\n", stats.unresolved);
 
 	if (!opt.do_load) {
 		printf("not loaded (bind/check only)\n");
@@ -471,15 +465,13 @@ int main(int argc, char **argv)
 		const char *module_name = NULL;
 		size_t before = img.len;
 
-		if (lkm_modinfo_get(img.data, img.len, "name", namebuf,
-				    sizeof(namebuf)) == 0)
+		if (lkm_modinfo_get(img.data, img.len, "name", namebuf, sizeof(namebuf)) == 0)
 			module_name = namebuf;
 
 		if (!module_name) {
-			fprintf(stderr,
-				"lkmctl: refusing to load a module with no name= in "
-				".modinfo: its struct module layout cannot be "
-				"adapted\n");
+			fprintf(stderr, "lkmctl: refusing to load a module with no name= in "
+					".modinfo: its struct module layout cannot be "
+					"adapted\n");
 			lkm_buffer_free(&img);
 			lkm_kallsyms_free(&ks);
 			free(joined);
@@ -490,8 +482,7 @@ int main(int argc, char **argv)
 			int layout_ok = 0;
 			char layout_reason[LKM_INSMOD_DETAIL_MAX] = "";
 
-			if (lkm_btf_module_layout("/sys/kernel/btf/vmlinux", &layout,
-						  layout_detail,
+			if (lkm_btf_module_layout("/sys/kernel/btf/vmlinux", &layout, layout_detail,
 						  sizeof(layout_detail)) != 0) {
 				snprintf(layout_reason, sizeof(layout_reason),
 					 "no usable kernel BTF: %.180s", layout_detail);
@@ -525,8 +516,7 @@ int main(int argc, char **argv)
 					free(joined);
 					return 1;
 				}
-				if (!isatty(STDIN_FILENO) ||
-				    !isatty(STDERR_FILENO)) {
+				if (!isatty(STDIN_FILENO) || !isatty(STDERR_FILENO)) {
 					fprintf(stderr,
 						"lkmctl: refusing --force load without a TTY: "
 						"cannot obtain the interactive confirmation\n");
@@ -539,7 +529,8 @@ int main(int argc, char **argv)
 					"[DANGER] forcing a module whose layout cannot be "
 					"adapted to this kernel: %s\n"
 					"[DANGER] the kernel may load it and never be able "
-					"to unload it.\n", layout_reason);
+					"to unload it.\n",
+					layout_reason);
 				if (lkm_confirm_unsafe_load(stdin, stderr) != 0) {
 					fprintf(stderr,
 						"lkmctl: load aborted; module not loaded\n");
@@ -560,21 +551,22 @@ int main(int argc, char **argv)
 	if (kmsg_open(&kmsg) != 0)
 		fprintf(stderr,
 			"[WARN] cannot read the kernel log (%s); a vermagic retry "
-			"will be impossible\n", strerror(kmsg.open_errno));
+			"will be impossible\n",
+			strerror(kmsg.open_errno));
 
 	memset(&result, 0, sizeof(result));
 	ret = lkm_insmod_exec(&img, opt.params, &ops, &result);
 	kmsg_close(&kmsg);
 
 	if (ret != 0) {
-		fprintf(stderr, "lkmctl: init_module failed: %s (%d)\n",
-			strerror(ret), ret);
+		fprintf(stderr, "lkmctl: init_module failed: %s (%d)\n", strerror(ret), ret);
 		if (result.detail[0])
 			fprintf(stderr, "  %s\n", result.detail);
 		if (result.attempts == 2)
 			fprintf(stderr,
 				"  vermagic was rewritten to '%s' and the load was "
-				"retried once\n", result.required);
+				"retried once\n",
+				result.required);
 		switch (ret) {
 		case EPERM:
 			fprintf(stderr, "  not permitted: run as root in a domain "
@@ -582,9 +574,8 @@ int main(int argc, char **argv)
 			break;
 		case ENOEXEC:
 			if (result.attempts == 1)
-				fprintf(stderr,
-					"  the image was rejected; no vermagic "
-					"rewrite/retry was attempted\n");
+				fprintf(stderr, "  the image was rejected; no vermagic "
+						"rewrite/retry was attempted\n");
 			report_vermagic(&img);
 			break;
 		case EEXIST:
@@ -608,9 +599,8 @@ int main(int argc, char **argv)
 			"a different vermagic than this kernel requires; .modinfo was "
 			"rewritten to '%s' and the load retried once\n",
 			result.required);
-		fprintf(stderr,
-			"[WARN] the module is now loaded against a mismatch the kernel "
-			"would normally refuse; verify its behaviour\n");
+		fprintf(stderr, "[WARN] the module is now loaded against a mismatch the kernel "
+				"would normally refuse; verify its behaviour\n");
 	}
 
 	printf("Loaded kernel module: %s\n", opt.module);

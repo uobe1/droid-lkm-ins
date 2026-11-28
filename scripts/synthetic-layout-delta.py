@@ -80,7 +80,8 @@ def main():
     ap.add_argument("--exit", type=int, default=1512)
     args = ap.parse_args()
 
-    data = bytearray(open(args.src, "rb").read())
+    with open(args.src, "rb") as f:
+        data = bytearray(f.read())
     e, _le, shoff, shentsize, shnum, shstrndx = read_elf(data)
 
     strtab = section(data, e, shoff, shentsize, shstrndx)
@@ -133,10 +134,12 @@ def main():
     struct.pack_into(e + "Q", data, tm["hdr"] + 32, args.size)
     struct.pack_into(e + "Q", data, seen["init_module"], args.init)
     struct.pack_into(e + "Q", data, seen["cleanup_module"], args.exit)
-    open(args.dst, "wb").write(data)
+    with open(args.dst, "wb") as f:
+        f.write(data)
 
     # Re-read and assert: a "successful" no-op would quietly prove nothing.
-    check = bytearray(open(args.dst, "rb").read())
+    with open(args.dst, "rb") as f:
+        check = bytearray(f.read())
     e2, _, shoff2, ent2, _, _ = read_elf(check)
     tm2 = section(check, e2, shoff2, ent2, names[tm_name])
     rela2 = section(check, e2, shoff2, ent2, names[rela_name])

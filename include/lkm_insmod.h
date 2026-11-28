@@ -64,8 +64,7 @@ int lkm_buffer_reserve(struct lkm_buffer *buf, size_t need);
 
 /* Read a whole file into the buffer, replacing its contents.  Returns 0 or a
  * positive errno; an empty file is refused with ENOEXEC and a reason. */
-int lkm_buffer_read_file(struct lkm_buffer *buf, const char *path,
-			 char *detail, size_t detail_len);
+int lkm_buffer_read_file(struct lkm_buffer *buf, const char *path, char *detail, size_t detail_len);
 
 /*
  * Resolve `path` to a canonical absolute path (symlinks, "..", "." and a
@@ -85,8 +84,8 @@ int lkm_canonicalize_path(const char *path, char *out, size_t out_len);
  * usable ELF64 relocatable object, ENAMETOOLONG when `out` is too small, or
  * EINVAL on a bad argument.
  */
-int lkm_modinfo_get(const unsigned char *data, size_t len, const char *key,
-		    char *out, size_t out_len);
+int lkm_modinfo_get(const unsigned char *data, size_t len, const char *key, char *out,
+		    size_t out_len);
 
 /*
  * Extract the second string of the kernel's
@@ -99,8 +98,7 @@ int lkm_modinfo_get(const unsigned char *data, size_t len, const char *key,
  * failed load just produced.  Returns 0, ENOENT when no complete record is
  * present, ENAMETOOLONG when `out` is too small, or EINVAL on a bad argument.
  */
-int lkm_extract_required_vermagic(const char *log_text, size_t log_len,
-				  char *out, size_t out_len);
+int lkm_extract_required_vermagic(const char *log_text, size_t log_len, char *out, size_t out_len);
 
 /*
  * Rewrite the image's vermagic entry to `required`.
@@ -115,8 +113,8 @@ int lkm_extract_required_vermagic(const char *log_text, size_t log_len,
  * ENOEXEC when the image is malformed, EINVAL for an unusable required string,
  * or ENOMEM.
  */
-int lkm_rewrite_vermagic(struct lkm_buffer *buf, const char *required,
-			 char *detail, size_t detail_len);
+int lkm_rewrite_vermagic(struct lkm_buffer *buf, const char *required, char *detail,
+			 size_t detail_len);
 
 /*
  * The kernel's `struct module` layout, read from /sys/kernel/btf/vmlinux.
@@ -132,10 +130,10 @@ int lkm_rewrite_vermagic(struct lkm_buffer *buf, const char *required,
  * per-kernel module build.
  */
 struct lkm_module_layout {
-	size_t size;      /* sizeof(struct module) */
-	size_t name_off;  /* byte offset of name[] */
-	size_t init_off;  /* byte offset of init */
-	size_t exit_off;  /* byte offset of exit; SIZE_MAX when absent */
+	size_t size;	 /* sizeof(struct module) */
+	size_t name_off; /* byte offset of name[] */
+	size_t init_off; /* byte offset of init */
+	size_t exit_off; /* byte offset of exit; SIZE_MAX when absent */
 	int have_exit;
 };
 
@@ -144,9 +142,8 @@ struct lkm_module_layout {
  * `struct module`.  Returns 0, ENOENT when there is no such struct, ENOEXEC
  * for a malformed BTF, or a positive errno.
  */
-int lkm_btf_module_layout(const char *btf_path,
-			  struct lkm_module_layout *layout,
-			  char *detail, size_t detail_len);
+int lkm_btf_module_layout(const char *btf_path, struct lkm_module_layout *layout, char *detail,
+			  size_t detail_len);
 
 /*
  * Rewrite `buf`'s `.gnu.linkonce.this_module` section and its relocation
@@ -163,10 +160,8 @@ int lkm_btf_module_layout(const char *btf_path,
  * a required relocation is missing, EINVAL for an unusable layout/name, or
  * ENOMEM.  The image is untouched on failure.
  */
-int lkm_adapt_module_layout(struct lkm_buffer *buf,
-			    const struct lkm_module_layout *layout,
-			    const char *module_name,
-			    char *detail, size_t detail_len);
+int lkm_adapt_module_layout(struct lkm_buffer *buf, const struct lkm_module_layout *layout,
+			    const char *module_name, char *detail, size_t detail_len);
 
 /*
  * Interactive confirmation for forcing a module whose struct module layout
@@ -194,10 +189,10 @@ struct lkm_insmod_ops {
 };
 
 struct lkm_insmod_result {
-	int attempts;   /* 1 or 2; never more */
-	int rewritten;  /* .modinfo was rewritten before the second attempt */
+	int attempts;  /* 1 or 2; never more */
+	int rewritten; /* .modinfo was rewritten before the second attempt */
 	int first_errno;
-	int err;        /* errno to report to the user; 0 on success */
+	int err; /* errno to report to the user; 0 on success */
 	char required[LKM_INSMOD_VERMAGIC_MAX];
 	char detail[LKM_INSMOD_DETAIL_MAX];
 };
@@ -217,8 +212,7 @@ struct lkm_insmod_result {
  *
  * Returns 0 or the errno to report.  `result->err` carries the same value.
  */
-int lkm_insmod_exec(struct lkm_buffer *buf, const char *params,
-		    const struct lkm_insmod_ops *ops,
+int lkm_insmod_exec(struct lkm_buffer *buf, const char *params, const struct lkm_insmod_ops *ops,
 		    struct lkm_insmod_result *result);
 
 #endif /* LKM_INSMOD_H */
