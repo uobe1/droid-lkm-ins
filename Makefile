@@ -24,7 +24,7 @@ INSMOD_SRC := src/lkm_insmod.c
 HEADERS := include/lkm_bind.h include/lkm_kallsyms.h include/lkm_loader.h \
 	include/lkm_insmod.h
 
-.PHONY: all static shared tools android test clean
+.PHONY: all static shared tools android test lint clean
 
 all: static tools test
 
@@ -80,6 +80,12 @@ test: $(OUT)/lkm_bind_test $(OUT)/lkm_insmod_test $(OUT)/lkmctl
 	./$(OUT)/lkm_bind_test
 	./$(OUT)/lkm_insmod_test
 	sh tests/host/lkmctl_cli_test.sh ./$(OUT)/lkmctl
+
+# Lint gate mirroring CI's lint steps (shellcheck/ruff/clang-format/yamllint/
+# actionlint/cppcheck).  Run before a dispatch; a green local run means the CI
+# lint steps pass.
+lint:
+	sh scripts/lint.sh
 
 $(OUT)/lkm_bind_test: tests/host/lkm_bind_test.c $(HEADERS) | $(OUT)
 	$(CC) $(CFLAGS) $(INC) -DLKM_BIND_IMPLEMENTATION \

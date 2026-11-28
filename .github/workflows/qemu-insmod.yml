@@ -122,7 +122,9 @@ jobs:
           make android
           test -s build/lkmctl-android
           file build/lkmctl-android
-          ! readelf -l build/lkmctl-android | grep -q INTERP
+          if readelf -l build/lkmctl-android | grep -q INTERP; then
+            exit 1
+          fi
           readelf -d build/lkmctl-android | tail -1
           # Move the layout to the second known set: 1584 / 376 / 1512.
           python3 scripts/synthetic-layout-delta.py \

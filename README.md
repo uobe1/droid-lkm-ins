@@ -50,7 +50,7 @@ Verified by the host test suites and the QEMU gate:
 - this is the same-KMI case with a synthetic layout delta; it is not a
   cross-KMI claim
 
-Not verified yet (see `docs/evidence/insmod-core.md`, local material):
+Not verified yet:
 
 - an adapted `.ko` has not been loaded on the **device**: the QEMU gate is
   green, but no device run has followed it, and the device is
@@ -117,8 +117,8 @@ evidence notes).
 of this project and is not claimed.  On a device with `CONFIG_CFI_CLANG=y` and
 `CONFIG_CFI_PERMISSIVE` unset it is structurally impossible: a module built by
 another KMI's toolchain carries no matching `__cfi_*` KCFI hashes, so
-`do_one_initcall` dies on the type hash before the module body runs (see
-`docs/evidence/insmod-core.md`, local material).  `lkmctl` adapts the section layout and the
+`do_one_initcall` dies on the type hash before the module body runs.
+`lkmctl` adapts the section layout and the
 vermagic; it cannot and does not try to repair CFI or code tags.
 
 `lkmctl` does not require a per-kernel module build.  Before `init_module(2)` it
@@ -221,6 +221,7 @@ make shared     # prebuilt shared libraries (host + aarch64)
 make tools      # the lkmctl binary for the host
 make android    # aarch64 static lkmctl for the device (see below)
 make test       # run the host test suites
+make lint       # lint surfaces matching CI (shellcheck/ruff/clang-format/yamllint/actionlint)
 ```
 
 The header is the deliverable; the library targets exist so a consumer can link
@@ -280,8 +281,6 @@ struct layouts may differ.
   `kernel/preinit/runner/runner.c` for the in-kernel variant.
 - [APatch] — `apd/src/insmod.rs`, a direct port of the above, and the source of
   the canonicalize/`Loaded kernel module:` output shape.
-- Verification of the kernel and reference claims above, with pinned commits
-  and `path:line` citations: `docs/evidence/insmod-core.md` (local material).
 
 Both are GPL-3.0; this project is GPL-2.0-only and shares no code with them, only
 the approach.
