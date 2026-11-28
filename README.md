@@ -31,52 +31,43 @@ It is deliberately *not* a full module loader.  See "Why it is small" below.
 
 ## Status
 
-Verified on the development host (commit `b6f7e0a`, 2026-11-21; re-run at
-`1450c01` on 2026-11-27 with the same 29+163+12 checks green):
+Verified by the host test suites and the QEMU gate:
 
-- `make test` passes: 29 (`lkm_bind_test`) + 163 (`lkm_insmod_test`) + 12
-  (`lkmctl_cli_test.sh`) checks, 0 failures, with `-Werror`; the same command
-  passes from a clean clone of `origin/master`.
-- The host's `/sys/kernel/btf/vmlinux` parses to
-  `size=1600 name_off=24 init_off=392 exit_off=1528`, matching the layout the
-  tests use.
-- The `SHT_NOBITS` regression test fails against the pre-fix code and passes
-  against this commit.
+- `make test` passes: `lkm_bind_test`, `lkm_insmod_test` and
+  `lkmctl_cli_test.sh`, 0 failures, with `-Werror`
+- the host BTF parser and the tests agree on the `struct module` layout
 - `make android` produces `build/lkmctl-android`: `file` says
   `ELF 64-bit LSB executable, ARM aarch64, statically linked`, `readelf -l`
-  has no `INTERP`, `readelf -d` has no dynamic section, and it runs on the
-  (aarch64) host.
-- **The layout adaptation runs end to end in QEMU** (run `44978474041`,
-  headSha `acb15eb`): a real `android16-6.12` module (`6.12.76-4k`) whose
-  `.this_module` layout was moved to `1584 / 376 / 1512` was adapted back to
-  the kernel's `1600 / 392 / 1528`, loaded by `init_module(2)`, seen in
-  `/proc/modules`, and removed by `rmmod` with no residue.  The gate asserts
-  `LKM_QEMU_{BOOT,LOAD,MODULE_VISIBLE,RMMOD,NO_RESIDUE,OK}` and no
-  `CFI failure|Oops|BUG:|Kernel panic|invalid module format|Unknown symbol`.
-  This is the same-KMI case with a synthetic layout delta; it is not a
-  cross-KMI claim.
+  has no `INTERP`, `readelf -d` has no dynamic section, and it runs on an
+  aarch64 host
+- the layout adaptation runs end to end in QEMU: a real `android16-6.12`
+  module whose `.this_module` layout was moved to a different offset set was
+  adapted back to the kernel's layout, loaded by `init_module(2)`, seen in
+  `/proc/modules`, and removed with no residue
+- the gate asserts `LKM_QEMU_{BOOT,LOAD,MODULE_VISIBLE,RMMOD,NO_RESIDUE,OK}`
+  and no `CFI failure|Oops|BUG:|Kernel panic|invalid module format|Unknown
+  symbol`
+- this is the same-KMI case with a synthetic layout delta; it is not a
+  cross-KMI claim
 
-Not verified yet (see [docs/evidence/insmod-core.md](docs/evidence/insmod-core.md)):
+Not verified yet (see `docs/evidence/insmod-core.md`, local material):
 
 - an adapted `.ko` has not been loaded on the **device**: the QEMU gate is
   green, but no device run has followed it, and the device is
   `CONFIG_CFI_CLANG=y`, so only a same-KMI module built with the device's own
-  toolchain may be tried there;
-- the `[permanent]` episode and the 678-symbol bind have no captured log;
+  toolchain may be tried there
+- the `[permanent]` episode and the large-symbol bind have no captured log
 - running `build/lkmctl-android` on an Android device (that is the droid-hook
-  gate; this repository only claims the ELF shape and a host run).
+  gate; this repository only claims the ELF shape and a host run)
 
-Two gates run today: `make test` in the foreground (never silent), and
-`qemu-insmod.yml` for the layout adaptation.  An earlier CI run
-(`44976400067`) built a throwaway cross-KMI probe; it was removed, because
-cross-KMI is out of scope and that artifact panics a `CONFIG_CFI_CLANG=y`
-device.
+Two gates run: `make test` in the foreground, and `qemu-insmod.yml` for the
+layout adaptation.  Cross-KMI loading is out of scope; an artifact built by
+another KMI's toolchain panics a `CONFIG_CFI_CLANG=y` device.
 
 ## Why it is small
 
 The obvious design — copy the `.ko` into kernel memory, apply relocations
-yourself, run `module_init` — is the wrong shape, and this project started down
-that path before checking how the existing tools do it.
+yourself, run `module_init` — is the wrong shape.
 
 [KernelSU]'s `ksuinit` (`userspace/ksuinit/src/lib.rs`) and [APatch]'s `apd`
 (`apd/src/insmod.rs`, an explicit port of KernelSU's) do something far smaller:
@@ -100,7 +91,9 @@ Each of these was learned from the references and is covered by the tests:
 
 - **`kptr_restrict`.** `/proc/kallsyms` reports zero addresses while it is 2 (and
   for non-root while it is 1).  It is lowered for the duration of the read and
-  restored afterwards, including on the error paths.
+  restored afterwards, including on the error paths.  If the restore write
+  fails it is retried once, and the load then aborts with `LKM_BIND_EIO`
+  instead of leaving the kernel less restricted.
 - **Stop at module symbols.** The file lists kernel symbols first and module
   symbols after.  Reading stops at the first line carrying a module name, so a
   module's symbol can never shadow a kernel symbol.
@@ -125,7 +118,7 @@ of this project and is not claimed.  On a device with `CONFIG_CFI_CLANG=y` and
 `CONFIG_CFI_PERMISSIVE` unset it is structurally impossible: a module built by
 another KMI's toolchain carries no matching `__cfi_*` KCFI hashes, so
 `do_one_initcall` dies on the type hash before the module body runs (see
-`docs/evidence/insmod-core.md`).  `lkmctl` adapts the section layout and the
+`docs/evidence/insmod-core.md`, local material).  `lkmctl` adapts the section layout and the
 vermagic; it cannot and does not try to repair CFI or code tags.
 
 `lkmctl` does not require a per-kernel module build.  Before `init_module(2)` it
@@ -214,11 +207,11 @@ keep using them.
 
 Two paths exist in `ksuinit`: local `/proc/kallsyms` resolution, and a resolver
 that asks the KernelSU driver for addresses.  This project implements the first.
-On the kernels it has been tested against, every symbol the modules needed was
-visible in `/proc/kallsyms` (verified: a 678-symbol module binds with zero
-unresolved), so the driver path was not required.  On a kernel where some symbol
-is genuinely hidden from `/proc/kallsyms`, this loader will report it and fail
-rather than pretend.
+On the kernels it targets, every symbol the suite's modules need is visible in
+`/proc/kallsyms`; a module with hundreds of undefined symbols binds with zero
+unresolved, so the driver path is not required.  On a kernel where a symbol is
+genuinely hidden from `/proc/kallsyms`, this loader reports it and fails rather
+than pretending.
 
 ## Building
 
@@ -247,9 +240,9 @@ to the device:
 make android
 ```
 
-This host has the NDK headers (`/usr/local/share/ndk`) but no bionic sysroot or
-Android clang driver, and installing a toolchain is out of scope, so the target
-links **statically against the aarch64 glibc cross toolchain**
+This build environment provides NDK headers but no bionic sysroot or Android
+clang driver, and installing a toolchain is out of scope, so the target links
+**statically against the aarch64 glibc cross toolchain**
 (`aarch64-linux-gnu-gcc -static`).  It is therefore not a bionic-linked binary,
 but it has no `PT_INTERP`: it needs neither `/system/bin/linker64` nor
 `/lib/ld-linux-aarch64.so.1`.
@@ -267,9 +260,8 @@ Limits:
 
 - static glibc, not bionic; a bionic target needs a real NDK and is not built
   here;
-- on-device execution is the device gate's claim, not this repository's: the
-  binary has only been checked with `file`, `readelf` and one run on the host
-  (which is itself aarch64);
+- on-device execution is not claimed here: the binary has only been checked
+  with `file`, `readelf` and one run on an aarch64 host;
 - the host binary `build/lkmctl` stays glibc dynamic and must not be used on
   Android.
 
@@ -289,8 +281,7 @@ struct layouts may differ.
 - [APatch] — `apd/src/insmod.rs`, a direct port of the above, and the source of
   the canonicalize/`Loaded kernel module:` output shape.
 - Verification of the kernel and reference claims above, with pinned commits
-  and `path:line` citations:
-  [docs/evidence/insmod-core.md](docs/evidence/insmod-core.md).
+  and `path:line` citations: `docs/evidence/insmod-core.md` (local material).
 
 Both are GPL-3.0; this project is GPL-2.0-only and shares no code with them, only
 the approach.

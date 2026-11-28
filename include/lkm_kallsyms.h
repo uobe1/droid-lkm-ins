@@ -322,8 +322,20 @@ LKM_BIND_API int lkm_kallsyms_load(const struct lkm_fs *fs,
 	ret = text ? lkm_kallsyms_parse(text, len, out) : LKM_BIND_ENOENT;
 	free(text);
 
-	if (relaxed)
-		fs->write_file(fs->ctx, "/proc/sys/kernel/kptr_restrict", old);
+	/*
+	 * kptr_restrict is a security setting, so leaving it relaxed is worse than
+	 * failing the load: report the failure instead of pretending the read was
+	 * side-effect free.  The restore is retried once before giving up.
+	 */
+	if (relaxed &&
+	    fs->write_file(fs->ctx, "/proc/sys/kernel/kptr_restrict", old) !=
+		    LKM_BIND_OK &&
+	    fs->write_file(fs->ctx, "/proc/sys/kernel/kptr_restrict", old) !=
+		    LKM_BIND_OK) {
+		lkm_kallsyms_free(out);
+		memset(out, 0, sizeof(*out));
+		return LKM_BIND_EIO;
+	}
 	return ret;
 }
 

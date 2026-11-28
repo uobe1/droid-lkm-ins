@@ -58,6 +58,7 @@ extern "C" {
 #define LKM_BIND_ENOENT (-2)
 #define LKM_BIND_ENOMEM (-12)
 #define LKM_BIND_E2BIG (-7)
+#define LKM_BIND_EIO (-5)
 
 /* A kallsyms provider.  `lookup` returns 0 when the symbol is unknown. */
 struct lkm_symtab {

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * lkmctl - bind a .ko's undefined symbols and let the kernel load it.
  *
@@ -405,6 +406,14 @@ int main(int argc, char **argv)
 
 	memset(&ks, 0, sizeof(ks));
 	ret = lkm_kallsyms_load(&fs, &ks);
+	if (ret == LKM_BIND_EIO) {
+		fprintf(stderr,
+			"lkmctl: could not restore /proc/sys/kernel/kptr_restrict.\n"
+			"  It is left at 1; set it back to its previous value by hand.\n");
+		lkm_buffer_free(&img);
+		free(joined);
+		return 1;
+	}
 	if (ret < 0) {
 		fprintf(stderr,
 			"lkmctl: cannot read usable symbols from /proc/kallsyms (%d).\n"

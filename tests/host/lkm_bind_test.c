@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Host tests for lkm_bind.h + lkm_kallsyms.h.
  *
@@ -335,6 +336,89 @@ static void test_searched_symbols_do_not_hit_module_entries(void)
 	lkm_kallsyms_free(&ks);
 }
 
+/* ---------------- kptr_restrict restore ---------------- */
+
+struct fake_fs {
+	int kptr;
+	int fail_restore;
+	char writes[8][16];
+	int nwrites;
+};
+
+static char *fake_read(void *ctx, const char *path, size_t *len)
+{
+	struct fake_fs *f = ctx;
+	const char *body;
+	char *p;
+	size_t n;
+
+	if (!strcmp(path, "/proc/sys/kernel/kptr_restrict")) {
+		p = malloc(8);
+		if (!p)
+			return NULL;
+		snprintf(p, 8, "%d\n", f->kptr);
+		*len = strlen(p);
+		return p;
+	}
+	if (!strcmp(path, "/proc/kallsyms"))
+		body = "ffff800010000000 T printk\n";
+	else
+		return NULL;
+	n = strlen(body);
+	p = malloc(n + 1);
+	if (!p)
+		return NULL;
+	memcpy(p, body, n + 1);
+	*len = n;
+	return p;
+}
+
+static int fake_write(void *ctx, const char *path, const char *value)
+{
+	struct fake_fs *f = ctx;
+
+	if (strcmp(path, "/proc/sys/kernel/kptr_restrict"))
+		return LKM_BIND_ENOENT;
+	if (f->nwrites < 8)
+		snprintf(f->writes[f->nwrites++], 16, "%s", value);
+	/* The restore writes the original value; the relaxation writes "1". */
+	if (f->fail_restore && atoi(value) == 2)
+		return LKM_BIND_EINVAL;
+	f->kptr = atoi(value);
+	return LKM_BIND_OK;
+}
+
+static void test_load_restores_kptr_restrict(void)
+{
+	struct fake_fs f = { .kptr = 2 };
+	struct lkm_fs fs = { .ctx = &f, .read_file = fake_read,
+			     .write_file = fake_write };
+	struct lkm_kallsyms ks;
+	int ret = lkm_kallsyms_load(&fs, &ks);
+
+	CHECK(ret > 0, "load must parse the kernel symbols");
+	CHECK(f.nwrites == 2 && !strcmp(f.writes[0], "1") &&
+	      !strcmp(f.writes[1], "2"),
+	      "load must relax kptr_restrict, then restore the old value");
+	CHECK(f.kptr == 2, "kptr_restrict must end at its original value");
+	lkm_kallsyms_free(&ks);
+}
+
+static void test_load_fails_when_kptr_restrict_cannot_be_restored(void)
+{
+	struct fake_fs f = { .kptr = 2, .fail_restore = 1 };
+	struct lkm_fs fs = { .ctx = &f, .read_file = fake_read,
+			     .write_file = fake_write };
+	struct lkm_kallsyms ks;
+	int ret = lkm_kallsyms_load(&fs, &ks);
+
+	CHECK(ret == LKM_BIND_EIO,
+	      "a failed restore must abort the load, not be swallowed");
+	CHECK(ks.syms == NULL && ks.count == 0,
+	      "the parsed symbols must be released on the error path");
+	CHECK(f.nwrites == 3, "the restore must be retried once");
+}
+
 static void test_abi_version(void)
 {
 	CHECK(lkm_bind_abi_version() == LKM_BIND_ABI_VERSION,
@@ -352,6 +436,8 @@ int main(void)
 	test_kallsyms_parse_stops_at_modules();
 	test_kallsyms_parse_skips_zero_addresses();
 	test_searched_symbols_do_not_hit_module_entries();
+	test_load_restores_kptr_restrict();
+	test_load_fails_when_kptr_restrict_cannot_be_restored();
 	test_abi_version();
 
 	printf("\n%d checks, %d failure(s)\n", checks, failures);

@@ -1,0 +1,2 @@
+# ShellCheck configuration for POSIX sh scripts.
+shell=sh

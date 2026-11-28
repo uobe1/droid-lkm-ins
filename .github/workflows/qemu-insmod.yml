@@ -17,8 +17,41 @@ permissions:
   contents: read
 
 jobs:
+  checks:
+    name: host gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: make test
+        run: make test
+      - name: Install static-analysis tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck cppcheck
+          python3 -m pip install --user --break-system-packages ruff yamllint 'clang-format==18.1.8'
+          go install github.com/rhysd/actionlint/cmd/actionlint@latest
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: shellcheck
+        run: shellcheck tests/host/lkmctl_cli_test.sh tests/qemu/init-insmod
+      - name: ruff
+        run: ruff check scripts
+      - name: clang-format
+        run: git ls-files -z '*.c' '*.h' | xargs -0 -r clang-format --dry-run --Werror
+      - name: yamllint
+        run: yamllint .github/workflows
+      - name: actionlint
+        run: actionlint
+      - name: cppcheck (userspace C only)
+        run: |
+          cppcheck --enable=warning,performance,portability --error-exitcode=1 \
+            --std=c11 --suppress=missingIncludeSystem -Iinclude \
+            src/*.c tests/host/*.c
+
   image:
     name: build same-KMI image and probe module
+    needs: checks
     runs-on: ubuntu-latest
     timeout-minutes: 20
     container:
@@ -89,7 +122,7 @@ jobs:
           make android
           test -s build/lkmctl-android
           file build/lkmctl-android
-          readelf -l build/lkmctl-android | grep -c INTERP || true
+          ! readelf -l build/lkmctl-android | grep -q INTERP
           readelf -d build/lkmctl-android | tail -1
           # Move the layout to the second known set: 1584 / 376 / 1512.
           python3 scripts/synthetic-layout-delta.py \
